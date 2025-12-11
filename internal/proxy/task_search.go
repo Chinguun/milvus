@@ -26,6 +26,7 @@ import (
 	"github.com/milvus-io/milvus/internal/util/function/models"
 	"github.com/milvus-io/milvus/internal/util/function/rerank"
 	"github.com/milvus-io/milvus/internal/util/segcore"
+	"github.com/milvus-io/milvus/internal/proxy/cbo"
 	"github.com/milvus-io/milvus/pkg/v2/common"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/metrics"
@@ -774,10 +775,65 @@ func (t *searchTask) tryGeneratePlan(params []*commonpb.KeyValuePair, dsl string
 		return nil, nil, 0, false, merr.WrapErrParameterInvalidMsg("failed to create query plan: %v", planErr)
 	}
 	metrics.ProxyParseExpressionLatency.WithLabelValues(strconv.FormatInt(paramtable.GetNodeID(), 10), "search", metrics.SuccessLabel).Observe(float64(time.Since(start).Milliseconds()))
+
+	// Cost-Based Optimizer (CBO): Decide between pre-filtering and post-filtering
+	// Only apply CBO if hints are not explicitly set by the user
+	if searchInfo.planInfo.Hints == "" {
+		applyCostBasedOptimization(t.ctx, plan, searchInfo.planInfo, t.schema.CollectionSchema)
+	}
+
 	log.Ctx(t.ctx).Debug("create query plan",
 		zap.String("dsl", t.request.Dsl), // may be very large if large term passed.
 		zap.String("anns field", annsFieldName), zap.Any("query info", searchInfo.planInfo))
 	return plan, searchInfo.planInfo, searchInfo.offset, searchInfo.isIterator, nil
+}
+
+// applyCostBasedOptimization applies Cost-Based Optimizer to decide between
+// pre-filtering (BitSet) and post-filtering (iterative filter) based on
+// estimated filter selectivity
+func applyCostBasedOptimization(
+	ctx context.Context,
+	plan *planpb.PlanNode,
+	queryInfo *planpb.QueryInfo,
+	schema *schemapb.CollectionSchema,
+) {
+	// Extract filter expression from plan
+	var filterExpr *planpb.Expr
+	if plan != nil {
+		vectorAnns := plan.GetVectorAnns()
+		if vectorAnns != nil {
+			filterExpr = vectorAnns.GetPredicates()
+		}
+	}
+
+	// If no filter expression, no optimization needed
+	if filterExpr == nil {
+		return
+	}
+
+	// Initialize selectivity estimator
+	estimator := cbo.NewMockSelectivityEstimator()
+
+	// Estimate selectivity
+	selectivity := estimator.EstimateSelectivity(filterExpr, schema)
+
+	// Decide filter strategy based on threshold
+	usePostFiltering := cbo.DecideFilterStrategy(selectivity, cbo.DefaultSelectivityThreshold)
+
+	// Update QueryInfo hints based on decision
+	if usePostFiltering {
+		queryInfo.Hints = cbo.IterativeFilterHint
+		log.Ctx(ctx).Info("CBO Decision: Post-filtering selected",
+			zap.Float64("selectivity", selectivity),
+			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.String("strategy", "iterative_filter"))
+	} else {
+		queryInfo.Hints = cbo.DisableIterativeFilterHint
+		log.Ctx(ctx).Info("CBO Decision: Pre-filtering selected",
+			zap.Float64("selectivity", selectivity),
+			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.String("strategy", "pre_filter_bitset"))
+	}
 }
 
 func (t *searchTask) tryParsePartitionIDsFromPlan(plan *planpb.PlanNode) ([]int64, error) {
