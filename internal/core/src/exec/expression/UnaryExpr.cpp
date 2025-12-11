@@ -1265,9 +1265,7 @@ PhyUnaryRangeFilterExpr::ExecRangeVisitorImplJsonByStats() {
                         ms);
                 });
 
-            if (!index->CanSkipShared(pointer, target_types)) {
-                index->ExecuteForSharedData(op_ctx_, pointer, shared_executor);
-            }
+            index->ExecuteForSharedData(op_ctx_, pointer, shared_executor);
         }
 
         // for NotEqual: flip the result
@@ -1560,6 +1558,12 @@ PhyUnaryRangeFilterExpr::ExecRangeVisitorImplForData(EvalCtx& context) {
             TargetBitmapView res,
             TargetBitmapView valid_res,
             IndexInnerType val) {
+        // If data is nullptr, this chunk was skipped by SkipIndex.
+        // We only need to update processed_cursor for bitmap_input indexing.
+        if (data == nullptr) {
+            processed_cursor += size;
+            return;
+        }
         switch (expr_type) {
             case proto::plan::GreaterThan: {
                 UnaryElementFunc<T, proto::plan::GreaterThan, filter_type> func;

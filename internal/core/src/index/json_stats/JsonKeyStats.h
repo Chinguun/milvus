@@ -168,6 +168,9 @@ class JsonKeyStats : public ScalarIndex<std::string> {
         const std::string& path,
         std::function<void(BsonView bson, uint32_t row_id, uint32_t offset)>
             func) {
+        if (shared_column_ == nullptr || bson_inverted_index_ == nullptr) {
+            return;
+        }
         bson_inverted_index_->TermQuery(
             path,
             [this, &func, op_ctx](const uint32_t* row_id_array,
@@ -181,6 +184,9 @@ class JsonKeyStats : public ScalarIndex<std::string> {
     void
     ExecuteExistsPathForSharedData(const std::string& path,
                                    TargetBitmapView bitset) {
+        if (bson_inverted_index_ == nullptr) {
+            return;
+        }
         bson_inverted_index_->TermQueryEach(
             path, [&bitset](uint32_t row_id, uint32_t offset) {
                 bitset[row_id] = true;
@@ -300,53 +306,6 @@ class JsonKeyStats : public ScalarIndex<std::string> {
                    processed_size,
                    num_rows);
         return processed_size;
-    }
-
-    // Whether shared columns can be skipped for this path (type-agnostic)
-    bool
-    CanSkipShared(const std::string& path) {
-        auto it = key_field_map_.find(path);
-        if (it == key_field_map_.end()) {
-            return true;
-        }
-
-        const auto& field_names = it->second;
-        for (const auto& field_name : field_names) {
-            if (field_layout_type_map_[field_name] ==
-                JsonKeyLayoutType::SHARED) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    // Whether shared columns can be skipped for this path with type filter
-    bool
-    CanSkipShared(const std::string& path,
-                  const std::set<milvus::index::JSONType>& target_types) {
-        auto it = key_field_map_.find(path);
-        if (it == key_field_map_.end()) {
-            return true;
-        }
-
-        const auto& field_names = it->second;
-        for (const auto& field_name : field_names) {
-            if (field_layout_type_map_[field_name] !=
-                JsonKeyLayoutType::SHARED) {
-                continue;
-            }
-
-            if (!target_types.empty() &&
-                target_types.find(key_data_type_map_[field_name]) ==
-                    target_types.end()) {
-                continue;
-            }
-
-            return false;
-        }
-
-        return true;
     }
 
     std::set<std::string>
@@ -497,6 +456,15 @@ class JsonKeyStats : public ScalarIndex<std::string> {
 
     std::string
     GetSharedKeyIndexDir();
+
+    std::string
+    GetMetaFilePath();
+
+    void
+    WriteMetaFile();
+
+    void
+    LoadMetaFile(const std::string& meta_file_path);
 
     void
     AddKeyStats(const std::vector<std::string>& path,
@@ -679,22 +647,16 @@ class JsonKeyStats : public ScalarIndex<std::string> {
 
     milvus::proto::common::LoadPriority load_priority_;
     // some meta cache for searching
-    // json_path -> [json_path_int, json_path_array, json_path_object, ...], only for all keys
+    // json_path -> [json_path_int, json_path_string, ...], only for shredding columns
     std::unordered_map<std::string, std::set<std::string>> key_field_map_;
     // field_name -> data_type, such as json_path_int -> JSONType::INT64, only for real shredding columns
     std::unordered_map<std::string, JSONType> shred_field_data_type_map_;
-    // key_name -> data_type, such as json_path_int -> JSONType::INT64, for all keys
-    std::unordered_map<std::string, JSONType> key_data_type_map_;
-    // field_name -> key_type, such as json_path_int -> JsonKeyLayoutType::TYPED, for all keys
-    std::unordered_map<std::string, JsonKeyLayoutType> field_layout_type_map_;
     // field_name -> field_id, such as json_path_int -> 1001
     std::unordered_map<std::string, int64_t> field_name_to_id_map_;
     // field_id -> field_name, such as 1001 -> json_path_int
     std::unordered_map<int64_t, std::string> field_id_to_name_map_;
     // field_name vector, the sequece is the same as the order of files
     std::vector<std::string> field_names_;
-    // column_group_id -> schema, the sequence of schemas is the same as the order of files
-    std::map<int64_t, std::shared_ptr<arrow::Schema>> column_group_schemas_;
     // field_name -> column
     mutable std::unordered_map<std::string,
                                std::shared_ptr<milvus::ChunkedColumnInterface>>
@@ -705,6 +667,10 @@ class JsonKeyStats : public ScalarIndex<std::string> {
     std::shared_ptr<milvus::ChunkedColumnInterface> shared_column_;
     SkipIndex skip_index_;
     cachinglayer::ResourceUsage cell_size_ = {0, 0};
+
+    // Meta file for storing layout type map and other metadata
+    JsonStatsMeta json_stats_meta_;
+    int64_t meta_file_size_{0};
 
     // Friend accessor for unit tests to call private methods safely.
     friend class ::TraverseJsonForBuildStatsAccessor;

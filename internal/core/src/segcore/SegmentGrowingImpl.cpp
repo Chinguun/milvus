@@ -108,26 +108,10 @@ SegmentGrowingImpl::Insert(int64_t reserved_offset,
         auto field_id = FieldId(field.field_id());
         AssertInfo(!field_id_to_offset.count(field_id), "duplicate field data");
         field_id_to_offset.emplace(field_id, field_offset++);
-        // may be added field, add the null if has existed data
-        if (exist_rows > 0 && !insert_record_.is_data_exist(field_id)) {
-            LOG_WARN(
-                "heterogeneous insert data found for segment {}, field id {}, "
-                "data type {}",
-                id_,
-                field_id.get(),
-                field.type());
-            schema_->AddField(FieldName(field.field_name()),
-                              field_id,
-                              DataType(field.type()),
-                              true,
-                              std::nullopt);
-            auto field_meta = schema_->get_fields().at(field_id);
-            insert_record_.append_field_meta(
-                field_id, field_meta, size_per_chunk(), mmap_descriptor_);
-            auto data = bulk_subscript_not_exist_field(field_meta, exist_rows);
-            insert_record_.get_data_base(field_id)->set_data_raw(
-                0, exist_rows, data.get(), field_meta);
-        }
+        AssertInfo(exist_rows == 0 || insert_record_.is_data_exist(field_id),
+                   "unexpected new field in growing segment {}, field id {}",
+                   id_,
+                   field.field_id());
     }
 
     // segment have latest schema while insert used old one
@@ -440,11 +424,15 @@ SegmentGrowingImpl::load_column_group_data_internal(
         std::vector<std::vector<int64_t>> row_group_lists;
         row_group_lists.reserve(insert_files.size());
         for (const auto& file : insert_files) {
-            auto reader = std::make_shared<milvus_storage::FileRowGroupReader>(
+            auto result = milvus_storage::FileRowGroupReader::Make(
                 fs,
                 file,
                 milvus_storage::DEFAULT_READ_BUFFER_SIZE,
                 storage::GetReaderProperties());
+            AssertInfo(result.ok(),
+                       "[StorageV2] Failed to create file row group reader: " +
+                           result.status().ToString());
+            auto reader = result.ValueOrDie();
             auto row_group_num =
                 reader->file_metadata()->GetRowGroupMetadataVector().size();
             std::vector<int64_t> all_row_groups(row_group_num);

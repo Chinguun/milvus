@@ -155,6 +155,18 @@ func TestComponentParam(t *testing.T) {
 		params.Save("common.clusterID", "0")
 	})
 
+	t.Run("test logConfig", func(t *testing.T) {
+		Params := &params.LogCfg
+		assert.True(t, Params.AsyncWriteEnable.GetAsBool())
+		assert.Equal(t, 10*time.Second, Params.AsyncWriteFlushInterval.GetAsDurationByParse())
+		assert.Equal(t, 100*time.Millisecond, Params.AsyncWriteDroppedTimeout.GetAsDurationByParse())
+		assert.Equal(t, "error", Params.AsyncWriteNonDroppableLevel.GetValue())
+		assert.Equal(t, 1*time.Second, Params.AsyncWriteStopTimeout.GetAsDurationByParse())
+		assert.Equal(t, 1024, Params.AsyncWritePendingLength.GetAsInt())
+		assert.Equal(t, int64(4*1024), Params.AsyncWriteBufferSize.GetAsSize())
+		assert.Equal(t, int64(1024*1024), Params.AsyncWriteMaxBytesPerLog.GetAsSize())
+	})
+
 	t.Run("test rootCoordConfig", func(t *testing.T) {
 		Params := &params.RootCoordCfg
 
@@ -402,6 +414,8 @@ func TestComponentParam(t *testing.T) {
 		assert.Equal(t, 2, Params.QueryNodeTaskParallelismFactor.GetAsInt())
 
 		assert.Equal(t, 100, Params.BalanceCheckCollectionMaxCount.GetAsInt())
+		assert.Equal(t, 30, Params.ResourceExhaustionPenaltyDuration.GetAsInt())
+		assert.Equal(t, 10, Params.ResourceExhaustionCleanupInterval.GetAsInt())
 	})
 
 	t.Run("test queryNodeConfig", func(t *testing.T) {
@@ -677,6 +691,7 @@ func TestComponentParam(t *testing.T) {
 		assert.Equal(t, 128, params.StreamingCfg.WALReadAheadBufferLength.GetAsInt())
 		assert.Equal(t, 1*time.Second, params.StreamingCfg.LoggingAppendSlowThreshold.GetAsDurationByParse())
 		assert.Equal(t, 3*time.Second, params.StreamingCfg.WALRecoveryGracefulCloseTimeout.GetAsDurationByParse())
+		assert.Equal(t, 24*time.Hour, params.StreamingCfg.WALRecoverySchemaExpirationTolerance.GetAsDurationByParse())
 		assert.Equal(t, 100, params.StreamingCfg.WALRecoveryMaxDirtyMessage.GetAsInt())
 		assert.Equal(t, 10*time.Second, params.StreamingCfg.WALRecoveryPersistInterval.GetAsDurationByParse())
 		assert.Equal(t, float64(0.6), params.StreamingCfg.FlushMemoryThreshold.GetAsFloat())
