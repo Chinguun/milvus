@@ -19,6 +19,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/parser/planparserv2"
 	"github.com/milvus-io/milvus/internal/proxy/accesslog"
+	"github.com/milvus-io/milvus/internal/proxy/cbo"
 	"github.com/milvus-io/milvus/internal/proxy/shardclient"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/internal/util/exprutil"
@@ -26,7 +27,6 @@ import (
 	"github.com/milvus-io/milvus/internal/util/function/models"
 	"github.com/milvus-io/milvus/internal/util/function/rerank"
 	"github.com/milvus-io/milvus/internal/util/segcore"
-	"github.com/milvus-io/milvus/internal/proxy/cbo"
 	"github.com/milvus-io/milvus/pkg/v2/common"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/metrics"
@@ -776,10 +776,18 @@ func (t *searchTask) tryGeneratePlan(params []*commonpb.KeyValuePair, dsl string
 	}
 	metrics.ProxyParseExpressionLatency.WithLabelValues(strconv.FormatInt(paramtable.GetNodeID(), 10), "search", metrics.SuccessLabel).Observe(float64(time.Since(start).Milliseconds()))
 
-	// Cost-Based Optimizer (CBO): Decide between pre-filtering and post-filtering
+	// Cost-Based Optimizer (CBO): Decide between standard filtering and iterative filtering
 	// Only apply CBO if hints are not explicitly set by the user
+	log.Ctx(t.ctx).Info("CBO: Checking if CBO should be applied",
+		zap.String("collection", t.schema.CollectionSchema.Name),
+		zap.String("dsl", dsl),
+		zap.String("hints", searchInfo.planInfo.Hints),
+		zap.Bool("plan_is_nil", plan == nil))
 	if searchInfo.planInfo.Hints == "" {
 		applyCostBasedOptimization(t.ctx, plan, searchInfo.planInfo, t.schema.CollectionSchema)
+	} else {
+		log.Ctx(t.ctx).Info("CBO: Skipped because hints are already set",
+			zap.String("hints", searchInfo.planInfo.Hints))
 	}
 
 	log.Ctx(t.ctx).Debug("create query plan",
@@ -789,7 +797,7 @@ func (t *searchTask) tryGeneratePlan(params []*commonpb.KeyValuePair, dsl string
 }
 
 // applyCostBasedOptimization applies Cost-Based Optimizer to decide between
-// pre-filtering (BitSet) and post-filtering (iterative filter) based on
+// standard filtering (BitSet) and iterative filtering based on
 // estimated filter selectivity
 func applyCostBasedOptimization(
 	ctx context.Context,
@@ -797,17 +805,29 @@ func applyCostBasedOptimization(
 	queryInfo *planpb.QueryInfo,
 	schema *schemapb.CollectionSchema,
 ) {
+	log.Ctx(ctx).Info("CBO: applyCostBasedOptimization called",
+		zap.String("collection", schema.Name),
+		zap.Bool("plan_is_nil", plan == nil))
+
 	// Extract filter expression from plan
 	var filterExpr *planpb.Expr
 	if plan != nil {
 		vectorAnns := plan.GetVectorAnns()
+		log.Ctx(ctx).Info("CBO: Extracting filter expression",
+			zap.Bool("vectorAnns_is_nil", vectorAnns == nil))
 		if vectorAnns != nil {
 			filterExpr = vectorAnns.GetPredicates()
+			log.Ctx(ctx).Info("CBO: Got predicates",
+				zap.Bool("predicates_is_nil", filterExpr == nil))
 		}
+	} else {
+		log.Ctx(ctx).Warn("CBO: Plan is nil, cannot extract filter expression")
 	}
 
 	// If no filter expression, no optimization needed
 	if filterExpr == nil {
+		log.Ctx(ctx).Warn("CBO: No filter expression found, skipping optimization",
+			zap.String("collection", schema.Name))
 		return
 	}
 
@@ -818,21 +838,39 @@ func applyCostBasedOptimization(
 	selectivity := estimator.EstimateSelectivity(filterExpr, schema)
 
 	// Decide filter strategy based on threshold
-	usePostFiltering := cbo.DecideFilterStrategy(selectivity, cbo.DefaultSelectivityThreshold)
+	useIterativeFiltering := cbo.DecideFilterStrategy(selectivity, cbo.DefaultSelectivityThreshold)
 
 	// Update QueryInfo hints based on decision
-	if usePostFiltering {
+	cboLogger := cbo.GetCBOLogger()
+	cboLogFile := cbo.GetCBOLogFile()
+	if useIterativeFiltering {
 		queryInfo.Hints = cbo.IterativeFilterHint
-		log.Ctx(ctx).Info("CBO Decision: Post-filtering selected",
+		// Log to both regular logger and CBO-specific logger
+		log.Ctx(ctx).Info("🔥🔥🔥 CBO Decision: Iterative filtering selected 🔥🔥🔥",
 			zap.Float64("selectivity", selectivity),
 			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
-			zap.String("strategy", "iterative_filter"))
+			zap.String("strategy", "iterative_filter"),
+			zap.String("collection", schema.Name),
+			zap.String("cbo_log_file", cboLogFile))
+		cboLogger.Info("CBO Decision: Iterative filtering selected",
+			zap.Float64("selectivity", selectivity),
+			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.String("strategy", "iterative_filter"),
+			zap.String("collection", schema.Name))
 	} else {
 		queryInfo.Hints = cbo.DisableIterativeFilterHint
-		log.Ctx(ctx).Info("CBO Decision: Pre-filtering selected",
+		// Log to both regular logger and CBO-specific logger
+		log.Ctx(ctx).Info("🔥🔥🔥 CBO Decision: Standard filtering selected 🔥🔥🔥",
 			zap.Float64("selectivity", selectivity),
 			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
-			zap.String("strategy", "pre_filter_bitset"))
+			zap.String("strategy", "standard_filter_bitset"),
+			zap.String("collection", schema.Name),
+			zap.String("cbo_log_file", cboLogFile))
+		cboLogger.Info("CBO Decision: Standard filtering selected",
+			zap.Float64("selectivity", selectivity),
+			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.String("strategy", "standard_filter_bitset"),
+			zap.String("collection", schema.Name))
 	}
 }
 

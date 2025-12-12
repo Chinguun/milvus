@@ -46,10 +46,13 @@ services:
       - pulsar
       - azurite
       - gcpnative
-    # Command
+    # Command - Keep container alive for development (build manually when needed)
     command: &builder-command >
-      /bin/bash -c "
-        make check-proto-product && make verifiers && make unittest"
+      tail -f /dev/null
+      # Command
+    #command: &builder-command >
+      #/bin/bash -c "
+       # make check-proto-product && make verifiers && make unittest"
 
   gpubuilder:
     image: ${IMAGE_REPO}/milvus-env:gpu-${OS_NAME}-${GPU_DATE_VERSION}

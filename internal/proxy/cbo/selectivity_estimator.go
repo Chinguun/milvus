@@ -22,14 +22,14 @@ import (
 )
 
 const (
-	// DefaultSelectivityThreshold defines the threshold for choosing pre-filtering vs post-filtering
-	// If selectivity < threshold: use pre-filtering (build BitSet)
-	// If selectivity >= threshold: use post-filtering (iterative filter)
+	// DefaultSelectivityThreshold defines the threshold for choosing standard filtering vs iterative filtering
+	// If selectivity < threshold: use standard filtering (build BitSet)
+	// If selectivity >= threshold: use iterative filtering (iterative filter)
 	DefaultSelectivityThreshold = 0.05 // 5%
 
-	// IterativeFilterHint is the hint value to enable iterative (post) filtering
+	// IterativeFilterHint is the hint value to enable iterative filtering
 	IterativeFilterHint = "iterative_filter"
-	// DisableIterativeFilterHint is the hint value to disable iterative filtering (force pre-filtering)
+	// DisableIterativeFilterHint is the hint value to disable iterative filtering (force standard filtering)
 	DisableIterativeFilterHint = "disable"
 )
 
@@ -214,17 +214,16 @@ func getFieldNameByID(schema *schemapb.CollectionSchema, fieldID int64) string {
 	return ""
 }
 
-// DecideFilterStrategy decides whether to use pre-filtering or post-filtering
+// DecideFilterStrategy decides whether to use standard filtering or iterative filtering
 // based on estimated selectivity
 // Returns:
-//   - true if post-filtering (iterative filter) should be used
-//   - false if pre-filtering (BitSet) should be used
+//   - true if iterative filtering should be used
+//   - false if standard filtering (BitSet) should be used
 func DecideFilterStrategy(
 	selectivity float64,
 	threshold float64,
 ) bool {
-	// If selectivity >= threshold, use post-filtering (iterative)
-	// If selectivity < threshold, use pre-filtering (BitSet)
+	// If selectivity >= threshold, use iterative filtering
+	// If selectivity < threshold, use standard filtering (BitSet)
 	return selectivity >= threshold
 }
-
