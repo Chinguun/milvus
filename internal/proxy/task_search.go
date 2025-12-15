@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -107,6 +108,11 @@ type searchTask struct {
 	userRequestedPkFieldExplicitly bool
 
 	storageCost segcore.StorageCost
+
+	// CBO evaluation metrics
+	cboMetrics *cbo.CBOMetrics
+	cboStartTime time.Time
+	baselineSerializedPlan []byte // Serialized plan for baseline comparison
 }
 
 func (t *searchTask) CanSkipAllocTimestamp() bool {
@@ -783,11 +789,133 @@ func (t *searchTask) tryGeneratePlan(params []*commonpb.KeyValuePair, dsl string
 		zap.String("dsl", dsl),
 		zap.String("hints", searchInfo.planInfo.Hints),
 		zap.Bool("plan_is_nil", plan == nil))
-	if searchInfo.planInfo.Hints == "" {
-		applyCostBasedOptimization(t.ctx, plan, searchInfo.planInfo, t.schema.CollectionSchema)
+	
+	// Check for hints in SearchParams JSON (Core also checks this)
+	hasHintsInSearchParams := false
+	if searchInfo.planInfo.SearchParams != "" {
+		var searchParamsMap map[string]interface{}
+		if err := json.Unmarshal([]byte(searchInfo.planInfo.SearchParams), &searchParamsMap); err == nil {
+			if hintsVal, exists := searchParamsMap["hints"]; exists {
+				if hintsStr, ok := hintsVal.(string); ok && hintsStr != "" {
+					hasHintsInSearchParams = true
+					log.Ctx(t.ctx).Info("CBO: Skipped because hints found in SearchParams JSON",
+						zap.String("hints", hintsStr))
+				}
+			}
+		}
+	}
+	
+	// Initialize CBO metrics tracking if evaluation is enabled
+	if paramtable.Get().ProxyCfg.CBOEvaluationEnabled.GetAsBool() {
+		t.cboStartTime = time.Now()
+		t.cboMetrics = &cbo.CBOMetrics{
+			QueryID:          fmt.Sprintf("%d-%d", t.ID(), time.Now().UnixNano()),
+			CollectionID:     t.CollectionID,
+			CollectionName:   t.schema.CollectionSchema.Name,
+			FilterExpression: dsl,
+			Timestamp:        time.Now(),
+			NumQueries:       int(t.request.GetNq()),
+			TopK:             searchInfo.planInfo.GetTopk(),
+		}
+	}
+
+	if searchInfo.planInfo.Hints == "" && !hasHintsInSearchParams {
+		// Record hints before CBO
+		hintsBefore := searchInfo.planInfo.Hints
+		cboDecision := applyCostBasedOptimization(t.ctx, plan, searchInfo.planInfo, t.schema.CollectionSchema, t.CollectionID, t.mixCoord)
+		// Record CBO decision in metrics
+		if t.cboMetrics != nil {
+			// Get selectivity threshold
+			threshold := paramtable.Get().ProxyCfg.CBOSelectivityThreshold.GetAsFloat()
+			if threshold <= 0 || threshold > 1.0 {
+				threshold = cbo.DefaultSelectivityThreshold
+			}
+			
+			if cboDecision != nil {
+				t.cboMetrics.DecisionApplied = true
+				t.cboMetrics.DecisionSkipReason = ""
+				t.cboMetrics.SelectivityEstimate = cboDecision.Selectivity
+				t.cboMetrics.SelectedStrategy = cboDecision.Strategy
+				t.cboMetrics.EstimatorType = cboDecision.EstimatorType
+				t.cboMetrics.SelectivityThreshold = threshold
+				t.cboMetrics.HintsBefore = hintsBefore
+				t.cboMetrics.HintsAfter = searchInfo.planInfo.Hints
+				
+				// Create baseline plan for comparison if enabled
+				if paramtable.Get().ProxyCfg.CBOEvaluationBaselineComparison.GetAsBool() {
+					sampleRate := paramtable.Get().ProxyCfg.CBOEvaluationBaselineSampleRate.GetAsFloat()
+					// Use simple random sampling
+					if sampleRate >= 1.0 || (sampleRate > 0 && float64(time.Now().UnixNano()%10000)/10000.0 < sampleRate) {
+						t.cboMetrics.BaselineSampled = true
+						baselinePlan := proto.Clone(plan).(*planpb.PlanNode)
+						if baselinePlan != nil && baselinePlan.GetVectorAnns() != nil {
+							baselineQueryInfo := proto.Clone(searchInfo.planInfo).(*planpb.QueryInfo)
+							if baselineQueryInfo != nil {
+								// Set opposite hint strategy
+								if cboDecision.Strategy == "iterative_filter" {
+									// CBO chose iterative, baseline uses standard (empty hint)
+									baselineQueryInfo.Hints = ""
+								} else {
+									// CBO chose standard, baseline uses iterative
+									baselineQueryInfo.Hints = cbo.IterativeFilterHint
+								}
+								baselinePlan.GetVectorAnns().QueryInfo = baselineQueryInfo
+								
+								// Marshal baseline plan
+								baselineSerialized, err := proto.Marshal(baselinePlan)
+								if err == nil {
+									t.baselineSerializedPlan = baselineSerialized
+									log.Ctx(t.ctx).Debug("CBO: Baseline plan created",
+										zap.String("cboStrategy", cboDecision.Strategy),
+										zap.String("baselineHint", baselineQueryInfo.Hints))
+								} else {
+									log.Ctx(t.ctx).Warn("CBO: Failed to marshal baseline plan", zap.Error(err))
+								}
+							}
+						}
+					} else {
+						t.cboMetrics.BaselineSampled = false
+					}
+				} else {
+					t.cboMetrics.BaselineSampled = false
+				}
+			} else {
+				// Set default values when no filter expression (no CBO decision)
+				t.cboMetrics.DecisionApplied = false
+				t.cboMetrics.DecisionSkipReason = "no_filter_expr"
+				t.cboMetrics.SelectivityEstimate = 1.0 // 100% selectivity when no filter
+				t.cboMetrics.SelectedStrategy = "standard_filter_bitset" // Default strategy
+				t.cboMetrics.EstimatorType = "none" // No estimator used
+				t.cboMetrics.SelectivityThreshold = threshold
+				t.cboMetrics.HintsBefore = hintsBefore
+				t.cboMetrics.HintsAfter = searchInfo.planInfo.Hints
+				t.cboMetrics.BaselineSampled = false
+			}
+		}
 	} else {
+		skipReason := "hints in QueryInfo"
+		if hasHintsInSearchParams {
+			skipReason = "hints in SearchParams JSON"
+		}
 		log.Ctx(t.ctx).Info("CBO: Skipped because hints are already set",
+			zap.String("reason", skipReason),
 			zap.String("hints", searchInfo.planInfo.Hints))
+		// Set default values when hints are already set
+		if t.cboMetrics != nil {
+			threshold := paramtable.Get().ProxyCfg.CBOSelectivityThreshold.GetAsFloat()
+			if threshold <= 0 || threshold > 1.0 {
+				threshold = cbo.DefaultSelectivityThreshold
+			}
+			t.cboMetrics.DecisionApplied = false
+			t.cboMetrics.DecisionSkipReason = skipReason
+			t.cboMetrics.SelectivityEstimate = 1.0
+			t.cboMetrics.SelectedStrategy = "standard_filter_bitset"
+			t.cboMetrics.EstimatorType = "none"
+			t.cboMetrics.SelectivityThreshold = threshold
+			t.cboMetrics.HintsBefore = searchInfo.planInfo.Hints
+			t.cboMetrics.HintsAfter = searchInfo.planInfo.Hints
+			t.cboMetrics.BaselineSampled = false
+		}
 	}
 
 	log.Ctx(t.ctx).Debug("create query plan",
@@ -796,17 +924,59 @@ func (t *searchTask) tryGeneratePlan(params []*commonpb.KeyValuePair, dsl string
 	return plan, searchInfo.planInfo, searchInfo.offset, searchInfo.isIterator, nil
 }
 
+// CBODecision contains information about the CBO decision made
+type CBODecision struct {
+	Selectivity   float64
+	Strategy      string
+	EstimatorType string
+}
+
+// baselineSearchTaskWrapper wraps searchTask for baseline execution
+type baselineSearchTaskWrapper struct {
+	searchTask *searchTask
+	searchReq  *internalpb.SearchRequest
+	resultBuf  *typeutil.ConcurrentSet[*internalpb.SearchResults]
+}
+
+func (b *baselineSearchTaskWrapper) searchShardWrapper(ctx context.Context, nodeID int64, qn types.QueryNodeClient, channel string) error {
+	searchReq := typeutil.Clone(b.searchReq)
+	searchReq.GetBase().TargetID = nodeID
+	req := &querypb.SearchRequest{
+		Req:             searchReq,
+		DmlChannels:     []string{channel},
+		Scope:           querypb.DataScope_All,
+		TotalChannelNum: int32(1),
+	}
+
+	result, err := qn.Search(ctx, req)
+	if err != nil {
+		return err
+	}
+	if result.GetStatus().GetErrorCode() != commonpb.ErrorCode_Success {
+		return merr.Error(result.GetStatus())
+	}
+	// Discard results - we only care about execution time
+	if b.resultBuf != nil {
+		b.resultBuf.Insert(result)
+	}
+	return nil
+}
+
 // applyCostBasedOptimization applies Cost-Based Optimizer to decide between
 // standard filtering (BitSet) and iterative filtering based on
 // estimated filter selectivity
+// Returns CBODecision if CBO was applied, nil otherwise
 func applyCostBasedOptimization(
 	ctx context.Context,
 	plan *planpb.PlanNode,
 	queryInfo *planpb.QueryInfo,
 	schema *schemapb.CollectionSchema,
-) {
+	collectionID int64,
+	mixCoord types.MixCoordClient,
+) *CBODecision {
 	log.Ctx(ctx).Info("CBO: applyCostBasedOptimization called",
 		zap.String("collection", schema.Name),
+		zap.Int64("collectionID", collectionID),
 		zap.Bool("plan_is_nil", plan == nil))
 
 	// Extract filter expression from plan
@@ -828,17 +998,51 @@ func applyCostBasedOptimization(
 	if filterExpr == nil {
 		log.Ctx(ctx).Warn("CBO: No filter expression found, skipping optimization",
 			zap.String("collection", schema.Name))
-		return
+		return nil
 	}
 
-	// Initialize selectivity estimator
-	estimator := cbo.NewMockSelectivityEstimator()
+	// Initialize selectivity estimator based on configuration
+	// For now, use statistics-based estimator if enabled, otherwise use mock
+	useStatisticsEstimator := paramtable.Get().ProxyCfg.CBOUseStatisticsEstimator.GetAsBool()
+	var estimator cbo.SelectivityEstimator
+	estimatorType := "mock"
+
+	if useStatisticsEstimator {
+		// Create statistics accessor with cache TTL from config and DataCoord client
+		cacheTTL := paramtable.Get().ProxyCfg.CBOStatisticsCacheTTL.GetAsDurationByParse()
+		accessor := cbo.NewCollectionStatisticsAccessorWithDataCoord(cacheTTL, mixCoord)
+		estimator = cbo.NewStatisticsBasedSelectivityEstimator(
+			accessor,
+			collectionID,
+			cbo.NewMockSelectivityEstimator(), // Fallback estimator
+		)
+		estimatorType = "statistics"
+		log.Ctx(ctx).Debug("CBO: Using statistics-based estimator",
+			zap.Int64("collectionID", collectionID))
+	} else {
+		estimator = cbo.NewMockSelectivityEstimator()
+		log.Ctx(ctx).Debug("CBO: Using mock estimator")
+	}
 
 	// Estimate selectivity
 	selectivity := estimator.EstimateSelectivity(filterExpr, schema)
 
-	// Decide filter strategy based on threshold
-	useIterativeFiltering := cbo.DecideFilterStrategy(selectivity, cbo.DefaultSelectivityThreshold)
+	// Decide filter strategy based on threshold (configurable, with fallback to default)
+	threshold := paramtable.Get().ProxyCfg.CBOSelectivityThreshold.GetAsFloat()
+	if threshold <= 0 || threshold > 1.0 {
+		// Invalid threshold, use default
+		threshold = cbo.DefaultSelectivityThreshold
+		log.Ctx(ctx).Warn("CBO: Invalid selectivity threshold from config, using default",
+			zap.Float64("configValue", paramtable.Get().ProxyCfg.CBOSelectivityThreshold.GetAsFloat()),
+			zap.Float64("defaultValue", cbo.DefaultSelectivityThreshold))
+	}
+	useIterativeFiltering := cbo.DecideFilterStrategy(selectivity, threshold)
+
+	// Determine strategy name
+	strategy := "standard_filter_bitset"
+	if useIterativeFiltering {
+		strategy = "iterative_filter"
+	}
 
 	// Update QueryInfo hints based on decision
 	cboLogger := cbo.GetCBOLogger()
@@ -848,29 +1052,35 @@ func applyCostBasedOptimization(
 		// Log to both regular logger and CBO-specific logger
 		log.Ctx(ctx).Info("🔥🔥🔥 CBO Decision: Iterative filtering selected 🔥🔥🔥",
 			zap.Float64("selectivity", selectivity),
-			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.Float64("threshold", threshold),
 			zap.String("strategy", "iterative_filter"),
 			zap.String("collection", schema.Name),
 			zap.String("cbo_log_file", cboLogFile))
 		cboLogger.Info("CBO Decision: Iterative filtering selected",
 			zap.Float64("selectivity", selectivity),
-			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.Float64("threshold", threshold),
 			zap.String("strategy", "iterative_filter"),
 			zap.String("collection", schema.Name))
 	} else {
-		queryInfo.Hints = cbo.DisableIterativeFilterHint
+		// Leave hints empty for standard filtering - no need to set "disable"
 		// Log to both regular logger and CBO-specific logger
 		log.Ctx(ctx).Info("🔥🔥🔥 CBO Decision: Standard filtering selected 🔥🔥🔥",
 			zap.Float64("selectivity", selectivity),
-			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.Float64("threshold", threshold),
 			zap.String("strategy", "standard_filter_bitset"),
 			zap.String("collection", schema.Name),
 			zap.String("cbo_log_file", cboLogFile))
 		cboLogger.Info("CBO Decision: Standard filtering selected",
 			zap.Float64("selectivity", selectivity),
-			zap.Float64("threshold", cbo.DefaultSelectivityThreshold),
+			zap.Float64("threshold", threshold),
 			zap.String("strategy", "standard_filter_bitset"),
 			zap.String("collection", schema.Name))
+	}
+
+	return &CBODecision{
+		Selectivity:   selectivity,
+		Strategy:      strategy,
+		EstimatorType: estimatorType,
 	}
 }
 
@@ -906,6 +1116,11 @@ func (t *searchTask) Execute(ctx context.Context) error {
 
 	tr := timerecord.NewTimeRecorder(fmt.Sprintf("proxy execute search %d", t.ID()))
 	defer tr.CtxElapse(ctx, "done")
+
+	// Record execution start time for CBO metrics
+	if t.cboMetrics != nil && !t.cboStartTime.IsZero() {
+		// Execution time will be calculated in PostExecute
+	}
 
 	err := t.lb.Execute(ctx, shardclient.CollectionWorkLoad{
 		Db:             t.request.GetDbName(),
@@ -1031,6 +1246,126 @@ func (t *searchTask) PostExecute(ctx context.Context) error {
 				Token:     iterInfo.GetToken(),
 				LastBound: getLastBound(t.result, iterInfo.LastBound, getMetricType(toReduceResults)),
 			}
+		}
+	}
+
+	// Record CBO metrics if enabled
+	if t.cboMetrics != nil && !t.cboStartTime.IsZero() {
+		executionTime := time.Since(t.cboStartTime)
+		t.cboMetrics.ExecutionTimeWithCBO = executionTime
+		if t.result != nil && t.result.Results != nil {
+			t.cboMetrics.NumResults = int64(len(t.result.Results.Ids.GetIntId().GetData()))
+			if len(t.result.Results.Ids.GetStrId().GetData()) > 0 {
+				t.cboMetrics.NumResults = int64(len(t.result.Results.Ids.GetStrId().GetData()))
+			}
+		}
+		t.cboMetrics.CalculateOptimizationResult()
+
+		// Record metrics in collector
+		collector := cbo.GetGlobalCBOMetricsCollector()
+		if collector != nil {
+			collector.RecordMetrics(ctx, t.cboMetrics)
+			log.Debug("CBO metrics recorded",
+				zap.String("queryID", t.cboMetrics.QueryID),
+				zap.Duration("executionTime", executionTime),
+				zap.String("strategy", t.cboMetrics.SelectedStrategy),
+				zap.String("result", string(t.cboMetrics.OptimizationResult)))
+		}
+		
+		// Execute baseline query for comparison if enabled
+		if len(t.baselineSerializedPlan) > 0 && paramtable.Get().ProxyCfg.CBOEvaluationBaselineComparison.GetAsBool() {
+			t.cboMetrics.BaselineAttempted = true
+			baselineTimeout := paramtable.Get().ProxyCfg.CBOEvaluationBaselineTimeout.GetAsDurationByParse()
+			baselineCtx, baselineCancel := context.WithTimeout(ctx, baselineTimeout)
+			defer baselineCancel()
+			
+			baselineStartTime := time.Now()
+			
+			// Clone SearchRequest for baseline execution
+			baselineSearchReq := typeutil.Clone(t.SearchRequest)
+			if baselineSearchReq != nil {
+				baselineSearchReq.SerializedExprPlan = t.baselineSerializedPlan
+				
+				// Create a temporary result buffer to discard baseline results
+				baselineResultBuf := typeutil.NewConcurrentSet[*internalpb.SearchResults]()
+				
+				// Create a baseline search task wrapper to execute the query
+				baselineTask := &baselineSearchTaskWrapper{
+					searchTask: t,
+					searchReq:  baselineSearchReq,
+					resultBuf:  baselineResultBuf,
+				}
+				
+				// Execute baseline search
+				err := t.lb.Execute(baselineCtx, shardclient.CollectionWorkLoad{
+					Db:             t.request.GetDbName(),
+					CollectionID:   t.SearchRequest.CollectionID,
+					CollectionName: t.collectionName,
+					Nq:             t.Nq,
+					Exec:           baselineTask.searchShardWrapper,
+				})
+				
+				baselineExecutionTime := time.Since(baselineStartTime)
+				
+				// Check if context was cancelled (timeout)
+				if baselineCtx.Err() == context.DeadlineExceeded {
+					t.cboMetrics.BaselineStatus = "timeout"
+					t.cboMetrics.BaselineErrorCode = "deadline_exceeded"
+					t.cboMetrics.BaselineErrorMsg = "Baseline query exceeded timeout"
+					log.Warn("CBO: Baseline query execution timed out",
+						zap.String("queryID", t.cboMetrics.QueryID),
+						zap.Duration("executionTime", baselineExecutionTime),
+						zap.Duration("timeout", baselineTimeout))
+				} else if err != nil {
+					t.cboMetrics.BaselineStatus = "error"
+					// Extract error code if available
+					if merrStatus := merr.Status(err); merrStatus != nil && merrStatus.GetErrorCode() != commonpb.ErrorCode_Success {
+						t.cboMetrics.BaselineErrorCode = merrStatus.GetErrorCode().String()
+						// Truncate error message to avoid large payloads
+						errMsg := err.Error()
+						if len(errMsg) > 200 {
+							errMsg = errMsg[:200] + "..."
+						}
+						t.cboMetrics.BaselineErrorMsg = errMsg
+					} else {
+						t.cboMetrics.BaselineErrorCode = "unknown"
+						errMsg := err.Error()
+						if len(errMsg) > 200 {
+							errMsg = errMsg[:200] + "..."
+						}
+						t.cboMetrics.BaselineErrorMsg = errMsg
+					}
+					log.Warn("CBO: Baseline query execution failed",
+						zap.String("queryID", t.cboMetrics.QueryID),
+						zap.Error(err),
+						zap.Duration("executionTime", baselineExecutionTime))
+					// Don't fail the main query if baseline fails
+				} else {
+					t.cboMetrics.BaselineStatus = "success"
+					t.cboMetrics.BaselineErrorCode = ""
+					t.cboMetrics.BaselineErrorMsg = ""
+					t.cboMetrics.ExecutionTimeWithoutCBO = baselineExecutionTime
+					t.cboMetrics.CalculateOptimizationResult()
+					
+					// Update metrics with baseline time
+					if collector != nil {
+						collector.RecordMetrics(ctx, t.cboMetrics)
+						log.Debug("CBO: Baseline metrics updated",
+							zap.String("queryID", t.cboMetrics.QueryID),
+							zap.Duration("baselineTime", baselineExecutionTime),
+							zap.Duration("cboTime", executionTime),
+							zap.String("result", string(t.cboMetrics.OptimizationResult)))
+					}
+				}
+			} else {
+				t.cboMetrics.BaselineAttempted = false
+				t.cboMetrics.BaselineStatus = "error"
+				t.cboMetrics.BaselineErrorCode = "clone_failed"
+				t.cboMetrics.BaselineErrorMsg = "Failed to clone SearchRequest"
+			}
+		} else {
+			t.cboMetrics.BaselineAttempted = false
+			t.cboMetrics.BaselineStatus = ""
 		}
 	}
 

@@ -6466,6 +6466,14 @@ func (node *Proxy) RegisterRestRouter(router gin.IRouter) {
 	// Collection requests
 	router.GET(http.CollectionListPath, listCollection(node))
 	router.GET(http.CollectionDescPath, describeCollection(node))
+
+	// CBO evaluation requests
+	router.GET(http.CBOMetricsPath, getCBOMetrics(node))
+	router.GET(http.CBOEvaluationPath, getCBOEvaluation(node))
+	router.GET(http.CBOComparisonPath, getCBOComparison(node))
+	router.GET(http.CBORecommendationsPath, getCBORecommendations(node))
+	router.GET(http.CBOOverviewPath, getCBOOverview(node))
+	router.GET(http.CBOTopPath, getCBOTop(node))
 }
 
 func (node *Proxy) CreatePrivilegeGroup(ctx context.Context, req *milvuspb.CreatePrivilegeGroupRequest) (*commonpb.Status, error) {

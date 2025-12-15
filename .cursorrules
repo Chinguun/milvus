@@ -31,8 +31,8 @@ The codebase is a hybrid of C++ (Core engine, Knowhere) and Go (Coordination, Pr
 - **Container Selection:** 
   - CPU builds: Use `milvus-builder-1` container
   - GPU builds: Use `milvus-gpubuilder-1` container (from `docker-compose-devcontainer.yml`)
-- **Example (CPU):** `cd /home/chinguun/development/code/milvus && docker exec milvus-builder-1 bash -c "cd /go/src/github.com/milvus-io/milvus && source scripts/setenv.sh && go build ./internal/proxy/..." 2>&1 | tail -30`
-- **Example (GPU):** `cd /home/chinguun/development/code/milvus && docker exec milvus-gpubuilder-1 bash -c "cd /go/src/github.com/milvus-io/milvus && source scripts/setenv.sh && go build ./internal/proxy/..." 2>&1 | tail -30`
+- **Example (CPU):** `cd /home/uclab-wsl/development/milvus && docker exec milvus-builder-1 bash -c "cd /go/src/github.com/milvus-io/milvus && source scripts/setenv.sh && go build ./internal/proxy/..." 2>&1 | tail -30`
+- **Example (GPU):** `cd /home/uclab-wsl/development/milvus && docker exec milvus-gpubuilder-1 bash -c "cd /go/src/github.com/milvus-io/milvus && source scripts/setenv.sh && go build ./internal/proxy/..." 2>&1 | tail -30`
 
 ## Debugging and Runtime
 - **Docker Context:** Debugging and runtime operations run inside the Milvus builder container on Docker.

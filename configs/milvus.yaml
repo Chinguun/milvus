@@ -383,6 +383,16 @@ proxy:
     serverMaxRecvSize: 67108864 # The maximum size of each RPC request that the proxy can receive, unit: byte
     clientMaxSendSize: 268435456 # The maximum size of each RPC request that the clients on proxy can send, unit: byte
     clientMaxRecvSize: 67108864 # The maximum size of each RPC request that the clients on proxy can receive, unit: byte
+  # CBO (Cost-Based Optimizer) Evaluation configuration
+  cbo:
+    evaluation:
+      enabled: true # Whether to enable CBO evaluation metrics collection
+      retention: 24h # Time-to-live for CBO evaluation metrics
+      maxMetrics: 10000 # Maximum number of CBO metrics to store in memory
+      baselineComparison: true # Whether to run baseline queries without CBO for comparison
+      baselineSampleRate: 1.0 # Sampling rate for baseline comparison (0.0-1.0). 1.0 = 100% (for demo), use 0.01 (1%) in production
+      baselineTimeout: 30s # Timeout for baseline query execution
+      exposeFilterExpr: false # Whether to expose filter expressions in API responses (security: keep false in production)
 
 # Related configuration of queryCoord, used to manage topology and load balancing for the query nodes, and handoff from growing segments to sealed segments.
 queryCoord:

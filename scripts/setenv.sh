@@ -16,7 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Exit immediately for non zero status
+# Continue on error to allow optional components to fail gracefully
 set +e
 
 SOURCE="${BASH_SOURCE[0]}"
@@ -38,20 +38,42 @@ unameOut="$(uname -s)"
 case "${unameOut}" in
     Linux*)
       # check if use asan.
-      MILVUS_ENABLE_ASAN_LIB=$(ldd $ROOT_DIR/internal/core/output/lib/libmilvus_core.so | grep asan | awk '{print $3}')
-      if [ -n "$MILVUS_ENABLE_ASAN_LIB" ]; then
-          echo "Enable ASAN With ${MILVUS_ENABLE_ASAN_LIB}"
-          export MILVUS_ENABLE_ASAN_LIB="$MILVUS_ENABLE_ASAN_LIB"
+      if test -f "$ROOT_DIR/internal/core/output/lib/libmilvus_core.so"; then
+        MILVUS_ENABLE_ASAN_LIB=$(ldd $ROOT_DIR/internal/core/output/lib/libmilvus_core.so 2>/dev/null | grep asan | awk '{print $3}')
+        if [ -n "$MILVUS_ENABLE_ASAN_LIB" ]; then
+            echo "Enable ASAN With ${MILVUS_ENABLE_ASAN_LIB}"
+            export MILVUS_ENABLE_ASAN_LIB="$MILVUS_ENABLE_ASAN_LIB"
+        fi
       fi
 
-      LIBJEMALLOC=$PWD/internal/core/output/lib/libjemalloc.so
+      LIBJEMALLOC=$ROOT_DIR/internal/core/output/lib/libjemalloc.so
       if test -f "$LIBJEMALLOC"; then
         export LD_PRELOAD="$LIBJEMALLOC"
       else
         echo "WARN: Cannot find $LIBJEMALLOC"
       fi
-      export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:$ROOT_DIR/internal/core/output/lib/pkgconfig:$ROOT_DIR/internal/core/output/lib64/pkgconfig"
-      export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:$ROOT_DIR/internal/core/output/lib:$ROOT_DIR/internal/core/output/lib64"
+      
+      # Build PKG_CONFIG_PATH
+      PKG_CONFIG_PATHS="$ROOT_DIR/internal/core/output/lib/pkgconfig"
+      if test -d "$ROOT_DIR/internal/core/output/lib64/pkgconfig"; then
+        PKG_CONFIG_PATHS="${PKG_CONFIG_PATHS}:$ROOT_DIR/internal/core/output/lib64/pkgconfig"
+      fi
+      if [ -z "$PKG_CONFIG_PATH" ]; then
+        export PKG_CONFIG_PATH="$PKG_CONFIG_PATHS"
+      else
+        export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${PKG_CONFIG_PATHS}"
+      fi
+      
+      # Build LD_LIBRARY_PATH
+      LD_LIBRARY_PATHS="$ROOT_DIR/internal/core/output/lib"
+      if test -d "$ROOT_DIR/internal/core/output/lib64"; then
+        LD_LIBRARY_PATHS="${LD_LIBRARY_PATHS}:$ROOT_DIR/internal/core/output/lib64"
+      fi
+      if [ -z "$LD_LIBRARY_PATH" ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATHS"
+      else
+        export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${LD_LIBRARY_PATHS}"
+      fi
       export RPATH=$LD_LIBRARY_PATH;;
     Darwin*)
       # detect llvm version by valid list

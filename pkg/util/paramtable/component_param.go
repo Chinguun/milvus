@@ -1894,6 +1894,20 @@ type proxyConfig struct {
 	QueryNodePoolingSize   ParamItem `refreshable:"false"`
 
 	HybridSearchRequeryPolicy ParamItem `refreshable:"true"`
+
+	// CBO (Cost-Based Optimizer) configuration
+	CBOUseStatisticsEstimator ParamItem `refreshable:"true"`
+	CBOStatisticsCacheTTL     ParamItem `refreshable:"true"`
+	CBOSelectivityThreshold   ParamItem `refreshable:"true"`
+
+	// CBO (Cost-Based Optimizer) Evaluation configuration
+	CBOEvaluationEnabled          ParamItem `refreshable:"true"`
+	CBOEvaluationRetention        ParamItem `refreshable:"true"`
+	CBOEvaluationMaxMetrics       ParamItem `refreshable:"true"`
+	CBOEvaluationBaselineComparison ParamItem `refreshable:"true"`
+	CBOEvaluationBaselineSampleRate ParamItem `refreshable:"true"`
+	CBOEvaluationBaselineTimeout    ParamItem `refreshable:"true"`
+	CBOEvaluationExposeFilterExpr  ParamItem `refreshable:"true"`
 }
 
 func (p *proxyConfig) init(base *BaseTable) {
@@ -2400,6 +2414,107 @@ Disabled if the value is less or equal to 0.`,
 		Export:       true,
 	}
 	p.QueryNodePoolingSize.Init(base.mgr)
+
+	p.HybridSearchRequeryPolicy = ParamItem{
+		Key:          "proxy.requery.hybridSearchPolicy",
+		Version:      "2.6.3",
+		DefaultValue: "OutputVector",
+		Doc:          `the policy to decide when to do requery in hybrid search, support "always", "outputvector" and "outputfields"`,
+		Export:       false,
+	}
+	p.HybridSearchRequeryPolicy.Init(base.mgr)
+
+	// CBO (Cost-Based Optimizer) Evaluation configuration
+	p.CBOEvaluationEnabled = ParamItem{
+		Key:          "proxy.cbo.evaluation.enabled",
+		Version:      "2.6.0",
+		DefaultValue: "true",
+		Doc:          "Whether to enable CBO evaluation metrics collection. When enabled, tracks query performance with and without CBO.",
+		Export:       true,
+	}
+	p.CBOEvaluationEnabled.Init(base.mgr)
+
+	p.CBOEvaluationRetention = ParamItem{
+		Key:          "proxy.cbo.evaluation.retention",
+		Version:      "2.6.0",
+		DefaultValue: "24h",
+		Doc:          "Time-to-live for CBO evaluation metrics. Metrics older than this will be automatically cleaned up.",
+		Export:       true,
+	}
+	p.CBOEvaluationRetention.Init(base.mgr)
+
+	p.CBOEvaluationMaxMetrics = ParamItem{
+		Key:          "proxy.cbo.evaluation.maxMetrics",
+		Version:      "2.6.0",
+		DefaultValue: "10000",
+		Doc:          "Maximum number of CBO metrics to store in memory. When exceeded, oldest metrics will be evicted.",
+		Export:       true,
+	}
+	p.CBOEvaluationMaxMetrics.Init(base.mgr)
+
+	p.CBOEvaluationBaselineComparison = ParamItem{
+		Key:          "proxy.cbo.evaluation.baselineComparison",
+		Version:      "2.6.0",
+		DefaultValue: "true",
+		Doc:          "Whether to run baseline queries without CBO for comparison. When enabled, sampled queries will be executed twice (with and without CBO) to measure improvement. Note: This adds overhead as queries are executed twice. Use baselineSampleRate to control sampling.",
+		Export:       true,
+	}
+	p.CBOEvaluationBaselineComparison.Init(base.mgr)
+
+	p.CBOEvaluationBaselineSampleRate = ParamItem{
+		Key:          "proxy.cbo.evaluation.baselineSampleRate",
+		Version:      "2.6.0",
+		DefaultValue: "1.0",
+		Doc:          "Sampling rate for baseline comparison (0.0-1.0). Only this fraction of queries will run baseline execution to limit overhead. Default: 1.0 (100% for demo purposes). Set to lower values (e.g., 0.01 for 1%) in production to limit overhead.",
+		Export:       true,
+	}
+	p.CBOEvaluationBaselineSampleRate.Init(base.mgr)
+
+	p.CBOEvaluationBaselineTimeout = ParamItem{
+		Key:          "proxy.cbo.evaluation.baselineTimeout",
+		Version:      "2.6.0",
+		DefaultValue: "30s",
+		Doc:          "Timeout for baseline query execution. Baseline queries exceeding this duration will be cancelled.",
+		Export:       true,
+	}
+	p.CBOEvaluationBaselineTimeout.Init(base.mgr)
+
+	p.CBOEvaluationExposeFilterExpr = ParamItem{
+		Key:          "proxy.cbo.evaluation.exposeFilterExpr",
+		Version:      "2.6.0",
+		DefaultValue: "false",
+		Doc:          "Whether to expose filter expressions in CBO metrics API responses. When false, FilterExpression is redacted by default for security. Can be overridden via include_filter_expr query parameter if this config is enabled.",
+		Export:       true,
+	}
+	p.CBOEvaluationExposeFilterExpr.Init(base.mgr)
+
+	// CBO (Cost-Based Optimizer) configuration
+	p.CBOUseStatisticsEstimator = ParamItem{
+		Key:          "proxy.cbo.useStatisticsEstimator",
+		Version:      "2.6.0",
+		DefaultValue: "false",
+		Doc:          "Whether to use statistics-based selectivity estimator for CBO. If false, uses mock estimator with hardcoded values.",
+		Export:       true,
+	}
+	p.CBOUseStatisticsEstimator.Init(base.mgr)
+
+	p.CBOStatisticsCacheTTL = ParamItem{
+		Key:          "proxy.cbo.statisticsCacheTTL",
+		Version:      "2.6.0",
+		DefaultValue: "300s",
+		Doc:          "Time-to-live for CBO statistics cache. Statistics will be refreshed after this duration.",
+		Export:       true,
+	}
+	p.CBOStatisticsCacheTTL.Init(base.mgr)
+
+	p.CBOSelectivityThreshold = ParamItem{
+		Key:          "proxy.cbo.selectivityThreshold",
+		Version:      "2.6.0",
+		DefaultValue: "0.05",
+		Doc:          "Selectivity threshold for CBO filter strategy decision (0.0-1.0). If estimated selectivity >= threshold, use iterative filtering; otherwise use standard filtering. Default: 0.05 (5%).",
+		Export:       true,
+	}
+	p.CBOSelectivityThreshold.Init(base.mgr)
 }
 
 // /////////////////////////////////////////////////////////////////////////////
