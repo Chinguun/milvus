@@ -112,6 +112,9 @@ case "${unameOut}" in
         OS_NAME="Linux"
     fi
     echo "Running on ${OS_NAME}"
+    # Use ccache as compiler launcher (same as macOS)
+    export CMAKE_C_COMPILER_LAUNCHER=ccache
+    export CMAKE_CXX_COMPILER_LAUNCHER=ccache
     export CPU_TARGET=avx
     GCC_VERSION=`gcc -dumpversion`
     if [[ `gcc -v 2>&1 | sed -n 's/.*\(--with-default-libstdcxx-abi\)=\(\w*\).*/\2/p'` == "gcc4" ]]; then

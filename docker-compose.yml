@@ -20,9 +20,10 @@ services:
         - ${IMAGE_REPO}/milvus-env:${OS_NAME}-${LATEST_DATE_VERSION}
     platform: linux/${IMAGE_ARCH}
     shm_size: 2G
-    # expose 19530 port so we can directly access milvus inside build container
-    # ports:
-    #  - "19530:19530"
+    # expose 19530 and 9091 ports so we can directly access milvus inside build container
+    ports:
+      - "19530:19530"
+      - "9091:9091"
     environment:
       <<: *ccache
       OS_NAME: ${OS_NAME}
@@ -46,41 +47,49 @@ services:
       - pulsar
       - azurite
       - gcpnative
-    # Command
+    # Command - Keep container alive for development (build manually when needed)
     command: &builder-command >
-      /bin/bash -c "
-        make check-proto-product && make verifiers && make unittest"
+      tail -f /dev/null
+      # Command
+    #command: &builder-command >
+      #/bin/bash -c "
+       # make check-proto-product && make verifiers && make unittest"
 
   gpubuilder:
-    image: ${IMAGE_REPO}/milvus-env:gpu-${OS_NAME}-${GPU_DATE_VERSION}
+    image: milvusdb/milvus-env:gpu-ubuntu22.04-latest
     # Build devcontainer
-    build:
-      context: .
-      dockerfile: build/docker/builder/gpu/${OS_NAME}/Dockerfile
-      args:
-        TARGETARCH: ${IMAGE_ARCH}
-      cache_from:
-        - ${IMAGE_REPO}/milvus-env:gpu-${OS_NAME}-${LATEST_GPU_DATE_VERSION}
+    # build:
+    #   context: .
+    #   dockerfile: build/docker/builder/gpu/${OS_NAME}/Dockerfile
+    #   args:
+    #     TARGETARCH: ${IMAGE_ARCH}
+    #   cache_from:
+    #     - ${IMAGE_REPO}/milvus-env:gpu-${OS_NAME}-${LATEST_GPU_DATE_VERSION}
     # user: {{ CURRENT_ID }}
+    runtime: nvidia
     shm_size: 2G
     # expose 19530 port so we can directly access milvus inside build container
-    # ports:
-    #  - "19530:19530"
+    ports:
+      - "19530:19530"
     environment:
       <<: *ccache
-      OS_NAME: ${OS_NAME}
+      OS_NAME: ubuntu22.04
+      HOME: /home/milvus
       PULSAR_ADDRESS: ${PULSAR_ADDRESS}
       ETCD_ENDPOINTS: ${ETCD_ENDPOINTS}
       MINIO_ADDRESS: ${MINIO_ADDRESS}
       CONAN_USER_HOME: /home/milvus
       AZURE_STORAGE_CONNECTION_STRING: ${AZURITE_CONNECTION_STRING}
       ENABLE_GCP_NATIVE: ${ENABLE_GCP_NATIVE}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      PATH: /root/.cargo/bin:/usr/local/bin:/usr/local/go/bin:/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes: &builder-volumes-gpu
       - .:/go/src/github.com/milvus-io/milvus:delegated
-      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/${OS_NAME}-ccache:/ccache:delegated
-      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/${OS_NAME}-go-mod:/go/pkg/mod:delegated
-      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/${OS_NAME}-vscode-extensions:/home/milvus/.vscode-server/extensions:delegated
-      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/${OS_NAME}-conan:/home/milvus/.conan:delegated
+      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/ubuntu22.04-ccache:/ccache:delegated
+      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/ubuntu22.04-go-mod:/go/pkg/mod:delegated
+      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/ubuntu22.04-vscode-extensions:/home/milvus/.vscode-server/extensions:delegated
+      - ${DOCKER_VOLUME_DIRECTORY:-.docker-gpu}/ubuntu22.04-conan:/home/milvus/.conan:delegated
     working_dir: '/go/src/github.com/milvus-io/milvus'
     depends_on:
       - etcd
@@ -88,10 +97,12 @@ services:
       - pulsar
       - azurite
       - gcpnative
-    # Command
+    # Command - Keep container alive for development (build manually when needed)
     command: &builder-command-gpu >
-      /bin/bash -c "
-        make check-proto-product && make verifiers && make unittest"
+      tail -f /dev/null
+    #command: &builder-command-gpu >
+      #/bin/bash -c "
+       # make check-proto-product && make verifiers && make unittest"
 
   etcd:
     image: milvusdb/etcd:3.5.5-r2

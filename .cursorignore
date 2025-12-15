@@ -1,0 +1,21 @@
+# Ignore build artifacts and output directories
+cmake_build/
+bin/
+lib/
+cmake-build-*/
+.make/
+
+# Ignore heavy data folders (if running local instances)
+volumes/
+data/
+
+# Ignore lock files (confuses AI with dependency noise)
+go.sum
+poetry.lock
+package-lock.json
+
+# Ignore generated Proto/GRPC code (optional, but usually better to ignore for logic)
+# Keeping them indexed *can* help context, but if indexing is slow, uncomment these:
+# *.pb.go
+# *.pb.cc
+# *.pb.h

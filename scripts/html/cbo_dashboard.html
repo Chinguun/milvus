@@ -1,0 +1,2022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CBO Evaluation Dashboard - Milvus</title>
+    <!-- Chart.js with multiple CDN fallbacks -->
+    <script>
+        // Try multiple CDN sources for Chart.js
+        (function() {
+            const cdnSources = [
+                'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
+                'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.min.js',
+                'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js'
+            ];
+            
+            let currentIndex = 0;
+            
+            function loadChartJS() {
+                if (currentIndex >= cdnSources.length) {
+                    console.warn('All Chart.js CDN sources failed, charts will be disabled');
+                    window.Chart = undefined;
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = cdnSources[currentIndex];
+                script.crossOrigin = 'anonymous';
+                script.onload = function() {
+                    console.log('Chart.js loaded successfully from:', cdnSources[currentIndex]);
+                };
+                script.onerror = function() {
+                    console.warn('Chart.js CDN failed:', cdnSources[currentIndex], '- trying next source');
+                    currentIndex++;
+                    loadChartJS();
+                };
+                document.head.appendChild(script);
+            }
+            
+            loadChartJS();
+        })();
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+        }
+
+        .config-panel {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .config-panel label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .config-panel input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .config-panel input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background: #5568d3;
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-card .value {
+            color: #333;
+            font-size: 32px;
+            font-weight: 700;
+        }
+
+        .stat-card .value.positive {
+            color: #10b981;
+        }
+
+        .stat-card .value.negative {
+            color: #ef4444;
+        }
+
+        .stat-card .value.neutral {
+            color: #6b7280;
+        }
+
+        .section {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge.standard {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge.iterative {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge.improved {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge.degraded {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge.neutral {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .recommendations {
+            list-style: none;
+        }
+
+        .recommendations li {
+            padding: 10px;
+            margin-bottom: 10px;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }
+
+        .filter-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-bar select, .filter-bar input {
+            padding: 8px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .filter-bar select:focus, .filter-bar input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 CBO Evaluation Dashboard</h1>
+            <p>Cost-Based Optimizer Performance Metrics and Analysis</p>
+        </div>
+
+        <div class="config-panel">
+            <label for="milvusHost">Milvus HTTP Host:</label>
+            <input type="text" id="milvusHost" value="http://localhost:9091" placeholder="http://localhost:9091">
+            <small style="color: #666; display: block; margin-top: -10px; margin-bottom: 10px;">
+                Note: If opening file directly and seeing connection errors, serve via HTTP server (see README)
+            </small>
+            
+            <label for="collectionId">Collection ID (optional):</label>
+            <input type="text" id="collectionId" placeholder="Leave empty to auto-detect from metrics">
+            <small style="color: #666; display: block; margin-top: -10px; margin-bottom: 10px;">
+                Auto-detection uses the collection with the most metrics. If evaluation shows zeros, try manually entering a collection ID.
+            </small>
+            <div id="availableCollections" style="margin-top: 10px; font-size: 12px; color: #666;"></div>
+            
+            <button class="btn" onclick="loadData()">🔄 Refresh Data</button>
+            <span id="lastUpdate" style="margin-left: 20px; color: #666;"></span>
+        </div>
+
+        <div id="errorContainer"></div>
+
+        <div id="loadingIndicator" class="loading">
+            <p>Loading CBO metrics...</p>
+        </div>
+
+        <div id="content" style="display: none;">
+            <div id="baselineWarning" style="display: none; background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+                <strong style="color: #92400e;">⚠ Baseline Comparison Notice:</strong>
+                <p style="color: #92400e; margin: 10px 0 0 0;">
+                    Baseline comparison is enabled by default with 100% sampling rate (for demo). 
+                    If queries show "N/A", baseline execution may have failed or timed out.
+                    Check the "Baseline Status" column for details.
+                </p>
+                <p style="color: #92400e; margin: 10px 0 0 0;">
+                    <strong>Note:</strong> For production, consider reducing <code>proxy.cbo.evaluation.baselineSampleRate</code> to 0.01 (1%) to limit overhead.
+                </p>
+            </div>
+            <div class="stats-grid" id="statsGrid"></div>
+
+            <div class="section">
+                <h2>📊 Strategy Distribution</h2>
+                <div class="chart-container">
+                    <canvas id="strategyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>📈 Selectivity Distribution</h2>
+                <div class="chart-container">
+                    <canvas id="selectivityChart"></canvas>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>⚡ Performance Metrics</h2>
+                <div class="chart-container">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>📋 Query Metrics</h2>
+                <div class="filter-bar">
+                    <select id="strategyFilter" onchange="filterTable()">
+                        <option value="">All Strategies</option>
+                        <option value="standard_filter_bitset">Standard Filter</option>
+                        <option value="iterative_filter">Iterative Filter</option>
+                    </select>
+                    <select id="resultFilter" onchange="filterTable()">
+                        <option value="">All Results</option>
+                        <option value="improved">Improved</option>
+                        <option value="degraded">Degraded</option>
+                        <option value="neutral">Neutral</option>
+                    </select>
+                    <input type="text" id="searchFilter" placeholder="Search filter expression..." onkeyup="filterTable()">
+                </div>
+                <div class="table-container">
+                    <table id="metricsTable">
+                        <thead>
+                            <tr>
+                                <th>Query ID</th>
+                                <th>Filter Expression</th>
+                                <th>Selectivity</th>
+                                <th>Strategy</th>
+                                <th>Execution Time (with CBO)</th>
+                                <th>Execution Time (without CBO)</th>
+                                <th>Improvement</th>
+                                <th>Result</th>
+                                <th>CBO Applied</th>
+                                <th>Baseline Status</th>
+                                <th>Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody id="metricsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>📊 Evaluation Summary</h2>
+                <div id="evaluationSummary"></div>
+            </div>
+
+            <div class="section">
+                <h2>🏆 Top Queries</h2>
+                <div id="topQueriesContainer"></div>
+            </div>
+
+            <div class="section">
+                <h2>💡 Recommendations</h2>
+                <ul class="recommendations" id="recommendationsList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allMetrics = [];
+        let filteredMetrics = [];
+        let charts = {};
+        let lastKnownMetrics = []; // Preserve last known metrics for graceful degradation
+        let isInitialLoad = true; // Track if this is the first load
+
+        async function loadData() {
+            let host = document.getElementById('milvusHost').value.trim();
+            const collectionId = document.getElementById('collectionId').value.trim();
+            
+            // Validate and set default host
+            if (!host) {
+                host = 'http://localhost:9091';
+                document.getElementById('milvusHost').value = host;
+            }
+            
+            // Ensure host has protocol
+            if (!host.startsWith('http://') && !host.startsWith('https://')) {
+                host = 'http://' + host;
+                document.getElementById('milvusHost').value = host;
+            }
+            
+            document.getElementById('errorContainer').innerHTML = '';
+            document.getElementById('loadingIndicator').style.display = 'block';
+            document.getElementById('content').style.display = 'none';
+
+            try {
+                // Load metrics
+                let metricsUrl = `${host}/api/v1/_cbo/metrics`;
+                if (collectionId) {
+                    metricsUrl += `?collection_id=${collectionId}`;
+                }
+
+                const metricsResponse = await fetch(metricsUrl);
+                if (!metricsResponse.ok) {
+                    throw new Error(`Failed to fetch metrics: ${metricsResponse.status} ${metricsResponse.statusText}`);
+                }
+
+                const metricsData = await metricsResponse.json();
+                console.log('Metrics response:', metricsData);
+                allMetrics = metricsData.data?.metrics || metricsData.metrics || [];
+                console.log(`Loaded ${allMetrics.length} metrics`);
+                
+                if (allMetrics.length === 0) {
+                    // If we have last known metrics, use them with a warning
+                    if (lastKnownMetrics.length > 0 && !isInitialLoad) {
+                        console.warn('No metrics found on refresh, using last known metrics');
+                        allMetrics = lastKnownMetrics;
+                        // Show a warning but don't throw error
+                        const warningDiv = document.createElement('div');
+                        warningDiv.className = 'error';
+                        warningDiv.style.background = '#fef3c7';
+                        warningDiv.style.color = '#92400e';
+                        warningDiv.innerHTML = `<strong>⚠ Warning:</strong> Metrics temporarily unavailable. Showing last known data from ${new Date().toLocaleTimeString()}. Metrics may have expired or been cleared.`;
+                        document.getElementById('errorContainer').innerHTML = '';
+                        document.getElementById('errorContainer').appendChild(warningDiv);
+                        // Auto-hide warning after 5 seconds
+                        setTimeout(() => {
+                            if (warningDiv.parentNode) {
+                                warningDiv.style.transition = 'opacity 0.5s';
+                                warningDiv.style.opacity = '0';
+                                setTimeout(() => warningDiv.remove(), 500);
+                            }
+                        }, 5000);
+                    } else if (isInitialLoad) {
+                        // Only throw error on initial load
+                        throw new Error('No CBO metrics found. Make sure CBO evaluation is enabled and queries have been executed.');
+                    } else {
+                        // On refresh with no previous data, show warning but keep UI visible
+                        const warningDiv = document.createElement('div');
+                        warningDiv.className = 'error';
+                        warningDiv.style.background = '#fef3c7';
+                        warningDiv.style.color = '#92400e';
+                        warningDiv.innerHTML = `<strong>⚠ Warning:</strong> No metrics available. Metrics may have expired or been cleared. Please run queries to generate new metrics.`;
+                        document.getElementById('errorContainer').innerHTML = '';
+                        document.getElementById('errorContainer').appendChild(warningDiv);
+                        // Don't update content, just show warning
+                        document.getElementById('loadingIndicator').style.display = 'none';
+                        return;
+                    }
+                } else {
+                    // Update last known metrics when we successfully load new ones
+                    lastKnownMetrics = JSON.parse(JSON.stringify(allMetrics)); // Deep copy
+                    // Clear any warnings
+                    document.getElementById('errorContainer').innerHTML = '';
+                }
+
+                filteredMetrics = [...allMetrics];
+                console.log('Filtered metrics:', filteredMetrics.length);
+
+                // Load evaluation data if we have a collection ID
+                let evaluationSummary = null;
+                let recommendations = null;
+                let comparison = null;
+                let overview = null;
+                let topQueries = { degraded: [], improved: [] };
+
+                if (allMetrics.length > 0) {
+                    // Get collection ID - use provided one, or find the most common one
+                    let collId = collectionId;
+                    if (!collId) {
+                        // Find all collection IDs and their counts
+                        const collectionIdCounts = {};
+                        const collectionIdToName = {};
+                        
+                        allMetrics.forEach(metric => {
+                            const id = getCollectionID(metric);
+                            const name = getField(metric, 'CollectionName', 'collectionName', 'collection_name') || '';
+                            if (id) {
+                                collectionIdCounts[id] = (collectionIdCounts[id] || 0) + 1;
+                                if (name && !collectionIdToName[id]) {
+                                    collectionIdToName[id] = name;
+                                }
+                            }
+                        });
+                        
+                        // Find the collection ID with the most metrics
+                        let maxCount = 0;
+                        let mostCommonId = null;
+                        for (const [id, count] of Object.entries(collectionIdCounts)) {
+                            if (count > maxCount) {
+                                maxCount = count;
+                                mostCommonId = id;
+                            }
+                        }
+                        
+                        // Use the most common collection ID, or fallback to first metric's ID
+                        collId = mostCommonId || getCollectionID(allMetrics[0]);
+                        
+                        console.log('Collection ID detection:', {
+                            found: Object.keys(collectionIdCounts).length,
+                            mostCommon: mostCommonId,
+                            count: maxCount,
+                            selected: collId
+                        });
+                        
+                        // Update the input field with the detected ID
+                        if (collId) {
+                            document.getElementById('collectionId').value = collId;
+                            const collectionName = collectionIdToName[collId] || '';
+                            document.getElementById('collectionId').placeholder = `Auto-detected: ${collId}${collectionName ? ' (' + collectionName + ')' : ''}`;
+                        }
+                        
+                        // Display available collections
+                        const collectionsDiv = document.getElementById('availableCollections');
+                        if (Object.keys(collectionIdCounts).length > 1) {
+                            let html = '<strong>Available Collections:</strong> ';
+                            const collectionList = Object.entries(collectionIdCounts)
+                                .sort((a, b) => b[1] - a[1]) // Sort by count descending
+                                .map(([id, count]) => {
+                                    const name = collectionIdToName[id] || '';
+                                    const isSelected = String(id) === String(collId);
+                                    return `<span style="cursor: pointer; padding: 2px 6px; margin: 0 4px; background: ${isSelected ? '#667eea' : '#e5e7eb'}; color: ${isSelected ? 'white' : '#333'}; border-radius: 3px;" onclick="document.getElementById('collectionId').value='${id}'; loadData();" title="${name || 'No name'} - ${count} metrics">${id} (${count})</span>`;
+                                })
+                                .join('');
+                            html += collectionList;
+                            collectionsDiv.innerHTML = html;
+                        } else if (Object.keys(collectionIdCounts).length === 1) {
+                            const [id, count] = Object.entries(collectionIdCounts)[0];
+                            const name = collectionIdToName[id] || '';
+                            collectionsDiv.innerHTML = `<strong>Collection:</strong> ${id}${name ? ' (' + name + ')' : ''} - ${count} metrics`;
+                        } else {
+                            collectionsDiv.innerHTML = '';
+                        }
+                    }
+                    
+                    if (collId) {
+                        console.log('Using collection ID:', collId);
+                        
+                        // Filter metrics for this collection to verify we have data
+                        const collectionMetrics = allMetrics.filter(m => {
+                            const mId = getCollectionID(m);
+                            return mId && String(mId) === String(collId);
+                        });
+                        console.log(`Found ${collectionMetrics.length} metrics for collection ${collId}`);
+                        
+                        // Try to load overview endpoint first (comprehensive data)
+                        try {
+                            const overviewResponse = await fetch(`${host}/api/v1/_cbo/overview?collection_id=${collId}`);
+                            if (overviewResponse.ok) {
+                                const overviewData = await overviewResponse.json();
+                                overview = overviewData.data || overviewData;
+                                console.log('Overview loaded:', overview);
+                                
+                                // Extract summary and comparison from overview
+                                if (overview) {
+                                    evaluationSummary = {
+                                        TotalQueries: getField(overview, 'TotalQueries', 'totalQueries') || 0,
+                                        QueriesWithCBO: getField(overview, 'QueriesWithCBO', 'queriesWithCBO') || 0,
+                                        QueriesImproved: getField(overview, 'QueriesImproved', 'queriesImproved') || 0,
+                                        QueriesDegraded: getField(overview, 'QueriesDegraded', 'queriesDegraded') || 0,
+                                        QueriesNeutral: getField(overview, 'QueriesNeutral', 'queriesNeutral') || 0,
+                                        AvgTimeReduction: getField(overview, 'AvgTimeReduction', 'avgTimeReduction') || 0,
+                                        AvgTimeReductionPercent: getField(overview, 'AvgTimeReductionPercent', 'avgTimeReductionPercent') || 0,
+                                        TotalTimeSaved: getField(overview, 'TotalTimeSaved', 'totalTimeSaved') || 0,
+                                        StrategyDistribution: getField(overview, 'StrategyDistribution', 'strategyDistribution') || {},
+                                        EstimatorDistribution: getField(overview, 'EstimatorDistribution', 'estimatorDistribution') || {},
+                                        BaselineCoveragePercent: getField(overview, 'BaselineCoveragePercent', 'baselineCoveragePercent') || 0
+                                    };
+                                    
+                                    comparison = {
+                                        TotalQueries: getField(overview, 'TotalQueries', 'totalQueries') || 0,
+                                        QueriesWithBaseline: getField(overview, 'QueriesWithBaseline', 'queriesWithBaseline') || 0,
+                                        AvgExecutionTimeWithCBO: 0, // Not in overview
+                                        AvgExecutionTimeWithoutCBO: 0, // Not in overview
+                                        AvgTimeReduction: getField(overview, 'AvgTimeReduction', 'avgTimeReduction') || 0,
+                                        AvgTimeReductionPercent: getField(overview, 'AvgTimeReductionPercent', 'avgTimeReductionPercent') || 0,
+                                        TotalTimeSaved: getField(overview, 'TotalTimeSaved', 'totalTimeSaved') || 0,
+                                        PercentileMetrics: getField(overview, 'PercentileMetrics', 'percentileMetrics') || {},
+                                        OptimizationResults: {
+                                            Improved: getField(overview, 'QueriesImproved', 'queriesImproved') || 0,
+                                            Degraded: getField(overview, 'QueriesDegraded', 'queriesDegraded') || 0,
+                                            Neutral: getField(overview, 'QueriesNeutral', 'queriesNeutral') || 0
+                                        }
+                                    };
+                                }
+                            } else {
+                                console.warn('Overview endpoint not available, falling back to individual endpoints');
+                            }
+                        } catch (e) {
+                            console.warn('Failed to load overview, falling back to individual endpoints:', e);
+                        }
+                        
+                        // Load top queries endpoint
+                        let topQueriesLoaded = false;
+                        try {
+                            const topDegradedResponse = await fetch(`${host}/api/v1/_cbo/top?collection_id=${collId}&order=degraded&limit=10`);
+                            if (topDegradedResponse.ok) {
+                                const topDegradedData = await topDegradedResponse.json();
+                                topQueries.degraded = topDegradedData.data?.queries || topDegradedData.data || [];
+                                console.log('Top degraded queries loaded:', topQueries.degraded.length);
+                                if (topQueries.degraded.length > 0) topQueriesLoaded = true;
+                            }
+                        } catch (e) {
+                            console.warn('Failed to load top degraded queries:', e);
+                        }
+                        
+                        try {
+                            const topImprovedResponse = await fetch(`${host}/api/v1/_cbo/top?collection_id=${collId}&order=improved&limit=10`);
+                            if (topImprovedResponse.ok) {
+                                const topImprovedData = await topImprovedResponse.json();
+                                topQueries.improved = topImprovedData.data?.queries || topImprovedData.data || [];
+                                console.log('Top improved queries loaded:', topQueries.improved.length);
+                                if (topQueries.improved.length > 0) topQueriesLoaded = true;
+                            }
+                        } catch (e) {
+                            console.warn('Failed to load top improved queries:', e);
+                        }
+                        
+                        // Fallback: compute top queries from raw metrics if API failed or returned empty
+                        if (!topQueriesLoaded && collectionMetrics.length > 0) {
+                            console.warn('Top queries API returned empty or failed, computing from raw metrics...');
+                            const computedTopQueries = computeTopQueriesFromMetrics(collectionMetrics, 10);
+                            if (computedTopQueries.degraded.length > 0 || computedTopQueries.improved.length > 0) {
+                                topQueries = computedTopQueries;
+                                console.log('Computed top queries from metrics:', {
+                                    degraded: topQueries.degraded.length,
+                                    improved: topQueries.improved.length
+                                });
+                            }
+                        }
+                        
+                        // Always compute fallback from metrics if we have them (even if API succeeded but returned zeros)
+                        if (collectionMetrics.length > 0) {
+                            const computedSummary = computeEvaluationSummaryFromMetrics(collectionMetrics);
+                            const computedComparison = computeComparisonFromMetrics(collectionMetrics);
+                            
+                            // Use computed data if API data is missing or shows zeros
+                            const apiTotalQueries = evaluationSummary ? (getField(evaluationSummary, 'TotalQueries', 'totalQueries') || 0) : 0;
+                            if (!evaluationSummary || apiTotalQueries === 0) {
+                                if (computedSummary && computedSummary.TotalQueries > 0) {
+                                    console.log('Using computed evaluation summary from metrics (API returned zeros or missing)');
+                                    evaluationSummary = computedSummary;
+                                }
+                            } else if (computedSummary && computedSummary.TotalQueries > apiTotalQueries) {
+                                // If computed has more data than API, prefer computed
+                                console.log('Using computed evaluation summary (has more data than API)');
+                                evaluationSummary = computedSummary;
+                            }
+                            
+                            const apiCompTotalQueries = comparison ? (getField(comparison, 'TotalQueries', 'totalQueries') || 0) : 0;
+                            if (!comparison || apiCompTotalQueries === 0) {
+                                if (computedComparison && computedComparison.TotalQueries > 0) {
+                                    console.log('Using computed comparison from metrics (API returned zeros or missing)');
+                                    comparison = computedComparison;
+                                }
+                            } else if (computedComparison && computedComparison.TotalQueries > apiCompTotalQueries) {
+                                // If computed has more data than API, prefer computed
+                                console.log('Using computed comparison (has more data than API)');
+                                comparison = computedComparison;
+                            }
+                        }
+                        
+                        // Fallback to individual endpoints if overview wasn't available
+                        if (!evaluationSummary) {
+                            try {
+                                const evalResponse = await fetch(`${host}/api/v1/_cbo/evaluation?collection_id=${collId}`);
+                                if (evalResponse.ok) {
+                                    const evalData = await evalResponse.json();
+                                    evaluationSummary = evalData.data || evalData;
+                                    console.log('Evaluation summary loaded:', evaluationSummary);
+                                    
+                                    // If summary shows zeros but we have metrics, compute from raw metrics as fallback
+                                    if (evaluationSummary && collectionMetrics.length > 0) {
+                                        const totalQueries = getField(evaluationSummary, 'TotalQueries', 'totalQueries') || 0;
+                                        if (totalQueries === 0) {
+                                            console.warn('Evaluation summary shows 0 queries but we have', collectionMetrics.length, 'metrics for this collection');
+                                            console.warn('Computing summary from raw metrics as fallback...');
+                                            evaluationSummary = computeEvaluationSummaryFromMetrics(collectionMetrics);
+                                            console.log('Computed evaluation summary from metrics:', evaluationSummary);
+                                        }
+                                    }
+                                } else {
+                                    const errorText = await evalResponse.text();
+                                    console.warn('Evaluation summary response not OK:', evalResponse.status, errorText);
+                                    // If API fails but we have metrics, compute from raw metrics
+                                    if (collectionMetrics.length > 0) {
+                                        console.warn('Computing summary from raw metrics as fallback...');
+                                        evaluationSummary = computeEvaluationSummaryFromMetrics(collectionMetrics);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('Failed to load evaluation summary:', e);
+                                // If API fails but we have metrics, compute from raw metrics
+                                if (collectionMetrics.length > 0) {
+                                    console.warn('Computing summary from raw metrics as fallback...');
+                                    evaluationSummary = computeEvaluationSummaryFromMetrics(collectionMetrics);
+                                }
+                            }
+                        }
+
+                        if (!comparison) {
+                            try {
+                                const compResponse = await fetch(`${host}/api/v1/_cbo/comparison?collection_id=${collId}`);
+                                if (compResponse.ok) {
+                                    const compData = await compResponse.json();
+                                    comparison = compData.data || compData;
+                                    console.log('Comparison loaded:', comparison);
+                                    
+                                    // If comparison shows zeros but we have metrics, compute from raw metrics as fallback
+                                    if (comparison && collectionMetrics.length > 0) {
+                                        const totalQueries = getField(comparison, 'TotalQueries', 'totalQueries') || 0;
+                                        if (totalQueries === 0) {
+                                            console.warn('Comparison shows 0 queries but we have', collectionMetrics.length, 'metrics for this collection');
+                                            console.warn('Computing comparison from raw metrics as fallback...');
+                                            comparison = computeComparisonFromMetrics(collectionMetrics);
+                                            console.log('Computed comparison from metrics:', comparison);
+                                        }
+                                    }
+                                } else {
+                                    const errorText = await compResponse.text();
+                                    console.warn('Comparison response not OK:', compResponse.status, errorText);
+                                    // If API fails but we have metrics, compute from raw metrics
+                                    if (collectionMetrics.length > 0) {
+                                        console.warn('Computing comparison from raw metrics as fallback...');
+                                        comparison = computeComparisonFromMetrics(collectionMetrics);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('Failed to load comparison:', e);
+                                // If API fails but we have metrics, compute from raw metrics
+                                if (collectionMetrics.length > 0) {
+                                    console.warn('Computing comparison from raw metrics as fallback...');
+                                    comparison = computeComparisonFromMetrics(collectionMetrics);
+                                }
+                            }
+                        }
+
+                        try {
+                            const recResponse = await fetch(`${host}/api/v1/_cbo/recommendations?collection_id=${collId}`);
+                            if (recResponse.ok) {
+                                const recData = await recResponse.json();
+                                recommendations = recData.data?.recommendations || recData.data?.recommendation || recData.recommendations || [];
+                                console.log('Recommendations loaded:', recommendations);
+                                
+                                // If recommendations show "No CBO metrics" but we have metrics, compute from raw metrics as fallback
+                                if (recommendations.length === 1 && 
+                                    recommendations[0] && 
+                                    recommendations[0].includes('No CBO metrics available') && 
+                                    collectionMetrics.length > 0) {
+                                    console.warn('Recommendations API says no metrics but we have', collectionMetrics.length, 'metrics for this collection');
+                                    console.warn('Computing recommendations from raw metrics as fallback...');
+                                    recommendations = computeRecommendationsFromMetrics(collectionMetrics);
+                                    console.log('Computed recommendations from metrics:', recommendations);
+                                }
+                            } else {
+                                const errorText = await recResponse.text();
+                                console.warn('Recommendations response not OK:', recResponse.status, errorText);
+                                // If API fails but we have metrics, compute from raw metrics
+                                if (collectionMetrics.length > 0) {
+                                    console.warn('Computing recommendations from raw metrics as fallback...');
+                                    recommendations = computeRecommendationsFromMetrics(collectionMetrics);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('Failed to load recommendations:', e);
+                            // If API fails but we have metrics, compute from raw metrics
+                            if (collectionMetrics.length > 0) {
+                                console.warn('Computing recommendations from raw metrics as fallback...');
+                                recommendations = computeRecommendationsFromMetrics(collectionMetrics);
+                            }
+                        }
+                    } else {
+                        console.warn('Could not determine collection ID from metrics');
+                    }
+                }
+
+                updateStats();
+                updateCharts();
+                updateTable();
+                updateEvaluationSummary(evaluationSummary, comparison, overview);
+                updateRecommendations(recommendations);
+                updateTopQueries(topQueries);
+                
+                // Check baseline coverage and show warning if low
+                const metricsWithBaseline = allMetrics.filter(m => {
+                    const execTimeWithout = getField(m, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo');
+                    return execTimeWithout && execTimeWithout > 0;
+                }).length;
+                const baselineCoverage = allMetrics.length > 0 ? (metricsWithBaseline / allMetrics.length * 100) : 0;
+                
+                const baselineWarning = document.getElementById('baselineWarning');
+                if (baselineCoverage < 20 && allMetrics.length > 5) {
+                    baselineWarning.style.display = 'block';
+                } else {
+                    baselineWarning.style.display = 'none';
+                }
+
+                document.getElementById('loadingIndicator').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+                document.getElementById('lastUpdate').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+                isInitialLoad = false; // Mark that initial load is complete
+
+            } catch (error) {
+                document.getElementById('loadingIndicator').style.display = 'none';
+                let errorMsg = error.message;
+                
+                // If we have last known metrics and this is a refresh (not initial load), show warning instead of error
+                if (lastKnownMetrics.length > 0 && !isInitialLoad) {
+                    const warningDiv = document.createElement('div');
+                    warningDiv.className = 'error';
+                    warningDiv.style.background = '#fef3c7';
+                    warningDiv.style.color = '#92400e';
+                    warningDiv.innerHTML = `<strong>⚠ Warning:</strong> ${errorMsg}. Showing last known data.`;
+                    document.getElementById('errorContainer').innerHTML = '';
+                    document.getElementById('errorContainer').appendChild(warningDiv);
+                    // Keep content visible with last known data
+                    if (document.getElementById('content').style.display === 'none') {
+                        document.getElementById('content').style.display = 'block';
+                    }
+                    return;
+                }
+                
+                // Provide helpful error messages
+                if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED') || errorMsg.includes('NetworkError')) {
+                    errorMsg = `Connection failed to <strong>${host}</strong>. Please check:
+                    <ul style="margin-top: 10px; padding-left: 20px; margin-bottom: 10px;">
+                        <li>Milvus is running: <code>curl ${host}/healthz</code></li>
+                        <li>The HTTP host and port are correct (default: http://localhost:9091)</li>
+                        <li>If accessing from a different machine, use the full URL (e.g., http://192.168.1.100:9091)</li>
+                        <li>If opening file directly (file://), you may need to serve via HTTP server due to CORS:
+                            <br><code>cd scripts/html && python3 -m http.server 8000</code>
+                            <br>Then open: <code>http://localhost:8000/cbo_dashboard.html</code>
+                        </li>
+                    </ul>`;
+                }
+                
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.innerHTML = `<strong>Error:</strong> ${errorMsg}`;
+                document.getElementById('errorContainer').innerHTML = '';
+                document.getElementById('errorContainer').appendChild(errorDiv);
+            }
+        }
+
+        function getField(obj, ...names) {
+            if (!obj) return null;
+            for (const name of names) {
+                if (obj[name] !== undefined && obj[name] !== null) {
+                    return obj[name];
+                }
+            }
+            return null;
+        }
+        
+        // Helper to get collection ID from metric
+        function getCollectionID(metric) {
+            return getField(metric, 'CollectionID', 'collectionID', 'CollectionId', 'collection_id') || null;
+        }
+
+        function updateStats() {
+            const stats = {
+                total: filteredMetrics.length,
+                improved: 0,
+                degraded: 0,
+                neutral: 0,
+                standard: 0,
+                iterative: 0,
+                avgSelectivity: 0,
+                avgExecutionTime: 0
+            };
+
+            let totalSelectivity = 0;
+            let totalExecutionTime = 0;
+            let execTimeCount = 0;
+            let selectivityCount = 0;
+
+            filteredMetrics.forEach(metric => {
+                const result = (getField(metric, 'OptimizationResult', 'optimizationResult', 'optimization_result') || 'neutral').toLowerCase();
+                const strategy = (getField(metric, 'SelectedStrategy', 'selectedStrategy', 'selected_strategy') || '').toLowerCase();
+                const selectivity = parseFloat(getField(metric, 'SelectivityEstimate', 'selectivityEstimate', 'selectivity_estimate') || 0);
+                const execTime = parseFloat(getField(metric, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+
+                if (result === 'improved') stats.improved++;
+                else if (result === 'degraded') stats.degraded++;
+                else stats.neutral++;
+
+                if (strategy.includes('standard')) stats.standard++;
+                else if (strategy.includes('iterative')) stats.iterative++;
+
+                if (!isNaN(selectivity) && selectivity > 0) {
+                    totalSelectivity += selectivity;
+                    selectivityCount++;
+                }
+
+                if (!isNaN(execTime) && execTime > 0) {
+                    // Convert nanoseconds to seconds
+                    totalExecutionTime += execTime / 1e9;
+                    execTimeCount++;
+                }
+            });
+
+            stats.avgSelectivity = selectivityCount > 0 ? (totalSelectivity / selectivityCount).toFixed(4) : '0.0000';
+            stats.avgExecutionTime = execTimeCount > 0 ? (totalExecutionTime / execTimeCount).toFixed(3) : '0.000';
+
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <h3>Total Queries</h3>
+                    <div class="value">${stats.total}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Improved</h3>
+                    <div class="value positive">${stats.improved}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Degraded</h3>
+                    <div class="value negative">${stats.degraded}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Neutral</h3>
+                    <div class="value neutral">${stats.neutral}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Standard Filter</h3>
+                    <div class="value">${stats.standard}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Iterative Filter</h3>
+                    <div class="value">${stats.iterative}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Avg Selectivity</h3>
+                    <div class="value">${stats.avgSelectivity}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Avg Execution Time</h3>
+                    <div class="value">${stats.avgExecutionTime}s</div>
+                </div>
+            `;
+        }
+
+        function updateCharts() {
+            // Check if Chart.js is available
+            if (typeof Chart === 'undefined') {
+                console.warn('Chart.js not loaded, skipping chart updates');
+                return;
+            }
+
+            // Strategy Distribution Chart
+            const strategyCounts = {
+                standard: 0,
+                iterative: 0,
+                other: 0
+            };
+
+            filteredMetrics.forEach(metric => {
+                const strategy = (getField(metric, 'SelectedStrategy', 'selectedStrategy', 'selected_strategy') || '').toLowerCase();
+                if (strategy.includes('standard') || strategy.includes('bitset')) {
+                    strategyCounts.standard++;
+                } else if (strategy.includes('iterative')) {
+                    strategyCounts.iterative++;
+                } else if (strategy && strategy !== 'none' && strategy !== 'unknown') {
+                    strategyCounts.other++;
+                }
+            });
+            
+            // Always create chart, even with no data
+            if (charts.strategy) charts.strategy.destroy();
+            const strategyCtx = document.getElementById('strategyChart').getContext('2d');
+            
+            const hasData = strategyCounts.standard > 0 || strategyCounts.iterative > 0 || strategyCounts.other > 0;
+            const labels = [];
+            const data = [];
+            const colors = [];
+            
+            if (hasData) {
+                if (strategyCounts.standard > 0) {
+                    labels.push('Standard Filter');
+                    data.push(strategyCounts.standard);
+                    colors.push('#3b82f6');
+                }
+                if (strategyCounts.iterative > 0) {
+                    labels.push('Iterative Filter');
+                    data.push(strategyCounts.iterative);
+                    colors.push('#f59e0b');
+                }
+                if (strategyCounts.other > 0) {
+                    labels.push('Other');
+                    data.push(strategyCounts.other);
+                    colors.push('#6b7280');
+                }
+            } else {
+                labels.push('No Data');
+                data.push(1);
+                colors.push('#e5e7eb');
+            }
+            
+            charts.strategy = new Chart(strategyCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: colors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (!hasData) {
+                                        return 'No strategy data available';
+                                    }
+                                    const label = context.label || '';
+                                    const value = context.parsed || 0;
+                                    return `${label}: ${value}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Selectivity Distribution Chart
+            const selectivityRanges = {
+                '0-0.05': 0,
+                '0.05-0.1': 0,
+                '0.1-0.3': 0,
+                '0.3-0.5': 0,
+                '0.5-1.0': 0
+            };
+
+            filteredMetrics.forEach(metric => {
+                const selectivity = parseFloat(getField(metric, 'SelectivityEstimate', 'selectivityEstimate', 'selectivity_estimate') || 0);
+                if (isNaN(selectivity) || selectivity < 0) return;
+                if (selectivity < 0.05) selectivityRanges['0-0.05']++;
+                else if (selectivity < 0.1) selectivityRanges['0.05-0.1']++;
+                else if (selectivity < 0.3) selectivityRanges['0.1-0.3']++;
+                else if (selectivity < 0.5) selectivityRanges['0.3-0.5']++;
+                else selectivityRanges['0.5-1.0']++;
+            });
+            
+            // Always create chart, even with no data
+            const totalInRanges = Object.values(selectivityRanges).reduce((a, b) => a + b, 0);
+            const hasSelectivityData = totalInRanges > 0;
+
+            if (charts.selectivity) charts.selectivity.destroy();
+            if (typeof Chart === 'undefined') return;
+            const selectivityCtx = document.getElementById('selectivityChart').getContext('2d');
+            charts.selectivity = new Chart(selectivityCtx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(selectivityRanges),
+                    datasets: [{
+                        label: 'Number of Queries',
+                        data: hasSelectivityData ? Object.values(selectivityRanges) : [0, 0, 0, 0, 0],
+                        backgroundColor: hasSelectivityData ? '#667eea' : '#e5e7eb'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (!hasSelectivityData) {
+                                        return 'No selectivity data available';
+                                    }
+                                    return `Number of Queries: ${context.parsed.y}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Performance Chart
+            const performanceData = filteredMetrics.map(metric => {
+                const execTime = parseFloat(getField(metric, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                if (isNaN(execTime) || execTime <= 0) return null;
+                // Handle both nanoseconds (large numbers) and seconds
+                return execTime > 1000000 ? execTime / 1e9 : execTime;
+            }).filter(t => t !== null && t > 0);
+            
+            // Always create chart, even with no data
+            const hasPerformanceData = performanceData.length > 0;
+
+            if (charts.performance) charts.performance.destroy();
+            if (typeof Chart === 'undefined') return;
+            const performanceCtx = document.getElementById('performanceChart').getContext('2d');
+            charts.performance = new Chart(performanceCtx, {
+                type: 'line',
+                data: {
+                    labels: hasPerformanceData 
+                        ? filteredMetrics.map((_, i) => `Query ${i + 1}`)
+                        : ['No Data'],
+                    datasets: [{
+                        label: 'Execution Time (seconds)',
+                        data: hasPerformanceData ? performanceData : [0],
+                        borderColor: hasPerformanceData ? '#667eea' : '#e5e7eb',
+                        backgroundColor: hasPerformanceData ? 'rgba(102, 126, 234, 0.1)' : 'rgba(229, 231, 235, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (!hasPerformanceData) {
+                                        return 'No performance data available';
+                                    }
+                                    return `Execution Time: ${context.parsed.y.toFixed(3)}s`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function filterTable() {
+            const strategyFilter = document.getElementById('strategyFilter').value;
+            const resultFilter = document.getElementById('resultFilter').value;
+            const searchFilter = document.getElementById('searchFilter').value.toLowerCase();
+
+            filteredMetrics = allMetrics.filter(metric => {
+                const strategy = getField(metric, 'SelectedStrategy', 'selectedStrategy', 'selected_strategy') || '';
+                const result = getField(metric, 'OptimizationResult', 'optimizationResult', 'optimization_result') || 'neutral';
+                const filterExpr = getField(metric, 'FilterExpression', 'filterExpression', 'filter_expression') || '';
+
+                if (strategyFilter && !strategy.includes(strategyFilter.replace('_', '_'))) return false;
+                if (resultFilter && result !== resultFilter) return false;
+                if (searchFilter && !filterExpr.toLowerCase().includes(searchFilter)) return false;
+
+                return true;
+            });
+
+            updateStats();
+            updateCharts();
+            updateTable();
+        }
+
+        function updateTable() {
+            const tbody = document.getElementById('metricsTableBody');
+            tbody.innerHTML = '';
+
+            filteredMetrics.forEach(metric => {
+                const queryId = getField(metric, 'QueryID', 'queryID', 'query_id') || 'N/A';
+                const filterExpr = getField(metric, 'FilterExpression', 'filterExpression', 'filter_expression') || 'N/A';
+                const selectivity = parseFloat(getField(metric, 'SelectivityEstimate', 'selectivityEstimate', 'selectivity_estimate') || 0);
+                const strategy = getField(metric, 'SelectedStrategy', 'selectedStrategy', 'selected_strategy') || 'N/A';
+                const execTimeWithCBO = parseFloat(getField(metric, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                const execTimeWithoutCBO = parseFloat(getField(metric, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                const timeReductionPercent = parseFloat(getField(metric, 'TimeReductionPercent', 'timeReductionPercent', 'time_reduction_percent') || 0);
+                const improvementPercent = parseFloat(getField(metric, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                const result = (getField(metric, 'OptimizationResult', 'optimizationResult', 'optimization_result') || 'neutral').toLowerCase();
+                const decisionApplied = getField(metric, 'DecisionApplied', 'decisionApplied', 'decision_applied');
+                const decisionSkipReason = getField(metric, 'DecisionSkipReason', 'decisionSkipReason', 'decision_skip_reason') || '';
+                const baselineStatus = getField(metric, 'BaselineStatus', 'baselineStatus', 'baseline_status') || '';
+                const baselineAttempted = getField(metric, 'BaselineAttempted', 'baselineAttempted', 'baseline_attempted');
+                const timestamp = getField(metric, 'Timestamp', 'timestamp');
+
+                // Helper function to format duration
+                function formatDuration(ns) {
+                    if (!ns || ns === 0) return 'N/A';
+                    if (typeof ns === 'number') {
+                        // Convert nanoseconds to seconds
+                        const seconds = ns / 1e9;
+                        if (seconds < 1) {
+                            return (seconds * 1000).toFixed(2) + 'ms';
+                        }
+                        return seconds.toFixed(3) + 's';
+                    }
+                    return String(ns);
+                }
+
+                // Format execution times
+                const execTimeWithCBOSec = formatDuration(execTimeWithCBO);
+                const execTimeWithoutCBOSec = formatDuration(execTimeWithoutCBO);
+                
+                // Format improvement percentage
+                let improvementDisplay = 'N/A';
+                let improvementColor = '#6b7280';
+                if (execTimeWithoutCBO > 0) {
+                    // Use improvementPercent if available, otherwise calculate from timeReductionPercent
+                    const improvement = improvementPercent !== 0 ? improvementPercent : timeReductionPercent;
+                    if (improvement !== 0) {
+                        if (improvement > 0) {
+                            improvementDisplay = `<span style="color: #10b981; font-weight: 600;">+${improvement.toFixed(2)}% faster</span>`;
+                            improvementColor = '#10b981';
+                        } else {
+                            improvementDisplay = `<span style="color: #ef4444; font-weight: 600;">${improvement.toFixed(2)}% slower</span>`;
+                            improvementColor = '#ef4444';
+                        }
+                    } else {
+                        improvementDisplay = '<span style="color: #6b7280;">0% (neutral)</span>';
+                    }
+                } else {
+                    // Show helpful message when baseline wasn't executed
+                    const baselineStatusVal = baselineStatus || '';
+                    if (baselineStatusVal === 'not_sampled') {
+                        improvementDisplay = '<span style="color: #6b7280; font-style: italic;" title="Query was not sampled for baseline comparison (sample rate: 1% by default)">Not sampled</span>';
+                    } else if (!baselineAttempted) {
+                        improvementDisplay = '<span style="color: #6b7280; font-style: italic;" title="Baseline comparison not attempted">N/A</span>';
+                    } else {
+                        improvementDisplay = '<span style="color: #6b7280; font-style: italic;" title="Baseline execution failed or timed out">N/A</span>';
+                    }
+                }
+                const strategyClass = strategy.toLowerCase().includes('standard') ? 'standard' : 'iterative';
+                const resultClass = result.toLowerCase();
+
+                const row = document.createElement('tr');
+                // Format selectivity - handle both number and string
+                const selectivityNum = isNaN(selectivity) ? 0 : selectivity;
+                const selectivityStr = selectivityNum.toFixed(4);
+                // Format timestamp
+                let timestampStr = 'N/A';
+                if (timestamp) {
+                    try {
+                        timestampStr = new Date(timestamp).toLocaleString();
+                    } catch (e) {
+                        timestampStr = timestamp;
+                    }
+                }
+                // Truncate query ID for display
+                const queryIdDisplay = queryId.length > 20 ? queryId.substring(0, 20) + '...' : queryId;
+                
+                // Format CBO applied status
+                let cboAppliedDisplay = 'N/A';
+                if (decisionApplied === true || decisionApplied === 'true') {
+                    cboAppliedDisplay = '<span class="badge improved">Yes</span>';
+                } else if (decisionApplied === false || decisionApplied === 'false') {
+                    const skipReason = decisionSkipReason || 'unknown';
+                    cboAppliedDisplay = `<span class="badge neutral" title="Skipped: ${skipReason}">No</span>`;
+                }
+                
+                // Format baseline status
+                let baselineDisplay = 'N/A';
+                if (baselineAttempted === true || baselineAttempted === 'true') {
+                    if (baselineStatus === 'success') {
+                        baselineDisplay = '<span class="badge improved">Success</span>';
+                    } else if (baselineStatus === 'timeout') {
+                        baselineDisplay = '<span class="badge degraded">Timeout</span>';
+                    } else if (baselineStatus === 'error') {
+                        baselineDisplay = '<span class="badge degraded">Error</span>';
+                    } else {
+                        baselineDisplay = `<span class="badge neutral">${baselineStatus || 'Unknown'}</span>`;
+                    }
+                } else if (baselineStatus === 'not_sampled') {
+                    baselineDisplay = '<span class="badge neutral">Not Sampled</span>';
+                }
+                
+                row.innerHTML = `
+                    <td style="font-family: monospace; font-size: 12px;" title="${queryId}">${queryIdDisplay}</td>
+                    <td>${filterExpr}</td>
+                    <td>${selectivityStr}</td>
+                    <td><span class="badge ${strategyClass}">${strategy}</span></td>
+                    <td><strong>${execTimeWithCBOSec}</strong></td>
+                    <td>${execTimeWithoutCBOSec}</td>
+                    <td>${improvementDisplay}</td>
+                    <td><span class="badge ${resultClass}">${result}</span></td>
+                    <td>${cboAppliedDisplay}</td>
+                    <td>${baselineDisplay}</td>
+                    <td>${timestampStr}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Compute evaluation summary from raw metrics (fallback when API returns zeros)
+        function computeEvaluationSummaryFromMetrics(metrics) {
+            if (!metrics || metrics.length === 0) {
+                return null;
+            }
+
+            const summary = {
+                TotalQueries: metrics.length,
+                QueriesWithCBO: metrics.length,
+                QueriesImproved: 0,
+                QueriesDegraded: 0,
+                QueriesNeutral: 0,
+                AvgTimeReduction: 0,
+                AvgTimeReductionPercent: 0,
+                TotalTimeSaved: 0,
+                StrategyDistribution: {},
+                EstimatorDistribution: {}
+            };
+
+            let totalTimeReduction = 0;
+            let totalTimeReductionPercent = 0;
+            let queriesWithBaseline = 0;
+
+            metrics.forEach(metric => {
+                // Count optimization results
+                const result = (getField(metric, 'OptimizationResult', 'optimizationResult', 'optimization_result') || 'neutral').toLowerCase();
+                if (result === 'improved') {
+                    summary.QueriesImproved++;
+                } else if (result === 'degraded') {
+                    summary.QueriesDegraded++;
+                } else {
+                    summary.QueriesNeutral++;
+                }
+
+                // Count strategy distribution
+                const strategy = getField(metric, 'SelectedStrategy', 'selectedStrategy', 'selected_strategy') || 'unknown';
+                summary.StrategyDistribution[strategy] = (summary.StrategyDistribution[strategy] || 0) + 1;
+
+                // Count estimator distribution
+                const estimator = getField(metric, 'EstimatorType', 'estimatorType', 'estimator_type') || 'unknown';
+                summary.EstimatorDistribution[estimator] = (summary.EstimatorDistribution[estimator] || 0) + 1;
+
+                // Accumulate time metrics if baseline exists
+                const execTimeWithoutCBO = parseFloat(getField(metric, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                if (execTimeWithoutCBO > 0) {
+                    queriesWithBaseline++;
+                    const execTimeWithCBO = parseFloat(getField(metric, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                    const timeReduction = execTimeWithoutCBO - execTimeWithCBO;
+                    const timeReductionPercent = (timeReduction / execTimeWithoutCBO) * 100;
+                    
+                    totalTimeReduction += timeReduction;
+                    totalTimeReductionPercent += timeReductionPercent;
+                    
+                    if (result === 'improved') {
+                        summary.TotalTimeSaved += timeReduction;
+                    }
+                }
+            });
+
+            // Calculate averages
+            if (queriesWithBaseline > 0) {
+                summary.AvgTimeReduction = totalTimeReduction / queriesWithBaseline;
+                summary.AvgTimeReductionPercent = totalTimeReductionPercent / queriesWithBaseline;
+            }
+
+            return summary;
+        }
+
+        // Compute comparison from raw metrics (fallback when API returns zeros)
+        function computeComparisonFromMetrics(metrics) {
+            if (!metrics || metrics.length === 0) {
+                return null;
+            }
+
+            const comparison = {
+                TotalQueries: metrics.length,
+                QueriesWithBaseline: 0,
+                AvgExecutionTimeWithCBO: 0,
+                AvgExecutionTimeWithoutCBO: 0,
+                AvgTimeReduction: 0,
+                AvgTimeReductionPercent: 0,
+                TotalTimeSaved: 0,
+                OptimizationResults: {
+                    Improved: 0,
+                    Degraded: 0,
+                    Neutral: 0
+                }
+            };
+
+            let totalTimeWithCBO = 0;
+            let totalTimeWithoutCBO = 0;
+            let totalTimeReduction = 0;
+            let totalTimeReductionPercent = 0;
+
+            metrics.forEach(metric => {
+                const execTimeWithCBO = parseFloat(getField(metric, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                // Handle nanoseconds (large numbers) or seconds
+                const execTimeWithCBO_ns = execTimeWithCBO > 1000000 ? execTimeWithCBO : execTimeWithCBO * 1e9;
+                totalTimeWithCBO += execTimeWithCBO_ns;
+
+                const execTimeWithoutCBO = parseFloat(getField(metric, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                if (execTimeWithoutCBO > 0) {
+                    comparison.QueriesWithBaseline++;
+                    const execTimeWithoutCBO_ns = execTimeWithoutCBO > 1000000 ? execTimeWithoutCBO : execTimeWithoutCBO * 1e9;
+                    totalTimeWithoutCBO += execTimeWithoutCBO_ns;
+                    
+                    const timeReduction = execTimeWithoutCBO_ns - execTimeWithCBO_ns;
+                    const timeReductionPercent = (timeReduction / execTimeWithoutCBO_ns) * 100;
+                    
+                    totalTimeReduction += timeReduction;
+                    totalTimeReductionPercent += timeReductionPercent;
+
+                    const result = (getField(metric, 'OptimizationResult', 'optimizationResult', 'optimization_result') || 'neutral').toLowerCase();
+                    if (result === 'improved') {
+                        comparison.OptimizationResults.Improved++;
+                        comparison.TotalTimeSaved += timeReduction;
+                    } else if (result === 'degraded') {
+                        comparison.OptimizationResults.Degraded++;
+                    } else {
+                        comparison.OptimizationResults.Neutral++;
+                    }
+                }
+            });
+
+            // Calculate averages
+            if (comparison.TotalQueries > 0) {
+                comparison.AvgExecutionTimeWithCBO = totalTimeWithCBO / comparison.TotalQueries;
+            }
+
+            if (comparison.QueriesWithBaseline > 0) {
+                comparison.AvgExecutionTimeWithoutCBO = totalTimeWithoutCBO / comparison.QueriesWithBaseline;
+                comparison.AvgTimeReduction = totalTimeReduction / comparison.QueriesWithBaseline;
+                comparison.AvgTimeReductionPercent = totalTimeReductionPercent / comparison.QueriesWithBaseline;
+            }
+
+            return comparison;
+        }
+
+        // Compute recommendations from raw metrics (fallback when API returns empty)
+        function computeRecommendationsFromMetrics(metrics) {
+            if (!metrics || metrics.length === 0) {
+                return ["No CBO metrics available for this collection. Enable CBO evaluation to get recommendations."];
+            }
+
+            const recommendations = [];
+
+            // Analyze degraded queries
+            let degradedCount = 0;
+            metrics.forEach(metric => {
+                const result = (getField(metric, 'OptimizationResult', 'optimizationResult', 'optimization_result') || 'neutral').toLowerCase();
+                if (result === 'degraded') {
+                    degradedCount++;
+                }
+            });
+
+            if (degradedCount > 0) {
+                const degradedPercent = (degradedCount / metrics.length) * 100;
+                if (degradedPercent > 10) {
+                    recommendations.push(
+                        "High percentage of queries showing performance degradation. Consider reviewing CBO selectivity threshold or estimator configuration."
+                    );
+                }
+            }
+
+            // Check estimator usage
+            let statisticsEstimatorCount = 0;
+            metrics.forEach(metric => {
+                const estimator = (getField(metric, 'EstimatorType', 'estimatorType', 'estimator_type') || '').toLowerCase();
+                if (estimator === 'statistics') {
+                    statisticsEstimatorCount++;
+                }
+            });
+
+            if (statisticsEstimatorCount === 0) {
+                recommendations.push(
+                    "Statistics-based estimator is not being used. Consider enabling it for more accurate selectivity estimates."
+                );
+            }
+
+            // Check strategy distribution
+            const strategyCounts = {};
+            metrics.forEach(metric => {
+                const strategy = getField(metric, 'SelectedStrategy', 'selectedStrategy', 'selected_strategy') || 'unknown';
+                strategyCounts[strategy] = (strategyCounts[strategy] || 0) + 1;
+            });
+
+            if (Object.keys(strategyCounts).length > 0) {
+                // Check if one strategy dominates
+                let maxCount = 0;
+                for (const count of Object.values(strategyCounts)) {
+                    if (count > maxCount) {
+                        maxCount = count;
+                    }
+                }
+
+                if (maxCount / metrics.length > 0.9) {
+                    recommendations.push(
+                        "One filter strategy is being used for almost all queries. Consider reviewing selectivity threshold."
+                    );
+                }
+            }
+
+            // Check for queries with very high selectivity estimates
+            let highSelectivityCount = 0;
+            metrics.forEach(metric => {
+                const selectivity = parseFloat(getField(metric, 'SelectivityEstimate', 'selectivityEstimate', 'selectivity_estimate') || 0);
+                if (selectivity > 0.5) {
+                    highSelectivityCount++;
+                }
+            });
+
+            if (highSelectivityCount > metrics.length / 2) {
+                recommendations.push(
+                    "Many queries have high selectivity estimates. Consider reviewing field statistics or estimator configuration."
+                );
+            }
+
+            // Check for queries with very low selectivity estimates (might benefit from different strategy)
+            let lowSelectivityCount = 0;
+            metrics.forEach(metric => {
+                const selectivity = parseFloat(getField(metric, 'SelectivityEstimate', 'selectivityEstimate', 'selectivity_estimate') || 0);
+                if (selectivity < 0.05) {
+                    lowSelectivityCount++;
+                }
+            });
+
+            if (lowSelectivityCount > metrics.length * 0.8) {
+                recommendations.push(
+                    "Most queries have very low selectivity estimates. Standard filtering strategy is likely optimal for these queries."
+                );
+            }
+
+            if (recommendations.length === 0) {
+                recommendations.push("CBO is performing well. No specific recommendations at this time.");
+            }
+
+            return recommendations;
+        }
+
+        // Compute top queries from raw metrics (fallback when API returns empty)
+        function computeTopQueriesFromMetrics(metrics, limit = 10) {
+            if (!metrics || metrics.length === 0) {
+                return { degraded: [], improved: [] };
+            }
+
+            // Filter to only queries with baseline data
+            const withBaseline = metrics.filter(m => {
+                const execTimeWithout = parseFloat(getField(m, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                return execTimeWithout > 0;
+            });
+
+            if (withBaseline.length === 0) {
+                return { degraded: [], improved: [] };
+            }
+
+            // Calculate improvement percent for each metric if not present
+            const metricsWithImprovement = withBaseline.map(m => {
+                const improvementPercent = parseFloat(getField(m, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                const timeReductionPercent = parseFloat(getField(m, 'TimeReductionPercent', 'timeReductionPercent', 'time_reduction_percent') || 0);
+                
+                // If improvementPercent is not set, calculate it
+                let improvement = improvementPercent;
+                if (improvement === 0 && timeReductionPercent !== 0) {
+                    improvement = timeReductionPercent;
+                } else if (improvement === 0) {
+                    const execTimeWithCBO = parseFloat(getField(m, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                    const execTimeWithoutCBO = parseFloat(getField(m, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                    if (execTimeWithoutCBO > 0) {
+                        const timeReduction = execTimeWithoutCBO - execTimeWithCBO;
+                        improvement = (timeReduction / execTimeWithoutCBO) * 100;
+                    }
+                }
+                
+                // Create a copy with improvement percent
+                const metricCopy = { ...m };
+                if (!getField(metricCopy, 'ImprovementPercent', 'improvementPercent', 'improvement_percent')) {
+                    metricCopy.ImprovementPercent = improvement;
+                }
+                return metricCopy;
+            });
+
+            // Sort by improvement percent
+            const sortedByImprovement = [...metricsWithImprovement].sort((a, b) => {
+                const aImp = parseFloat(getField(a, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                const bImp = parseFloat(getField(b, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                return bImp - aImp; // Descending (best improvements first)
+            });
+
+            // Get top improved (positive improvement)
+            const improved = sortedByImprovement
+                .filter(m => {
+                    const imp = parseFloat(getField(m, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                    return imp > 0;
+                })
+                .slice(0, limit);
+
+            // Get top degraded (negative improvement, worst first)
+            const degraded = [...sortedByImprovement]
+                .filter(m => {
+                    const imp = parseFloat(getField(m, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                    return imp < 0;
+                })
+                .sort((a, b) => {
+                    const aImp = parseFloat(getField(a, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                    const bImp = parseFloat(getField(b, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                    return aImp - bImp; // Ascending (worst degradations first)
+                })
+                .slice(0, limit);
+
+            return { degraded, improved };
+        }
+
+        function updateTopQueries(topQueries) {
+            const container = document.getElementById('topQueriesContainer');
+            let html = '';
+            
+            // If topQueries is empty or null, try to compute from raw metrics
+            if (!topQueries || ((!topQueries.degraded || topQueries.degraded.length === 0) && 
+                (!topQueries.improved || topQueries.improved.length === 0))) {
+                // Try to compute from raw metrics as fallback
+                if (allMetrics && allMetrics.length > 0) {
+                    const collectionId = document.getElementById('collectionId').value.trim();
+                    let metricsToUse = allMetrics;
+                    
+                    if (collectionId) {
+                        metricsToUse = allMetrics.filter(m => {
+                            const mId = getCollectionID(m);
+                            return mId && String(mId) === String(collectionId);
+                        });
+                    }
+                    
+                    if (metricsToUse.length > 0) {
+                        const computedTopQueries = computeTopQueriesFromMetrics(metricsToUse, 10);
+                        if (computedTopQueries.degraded.length > 0 || computedTopQueries.improved.length > 0) {
+                            topQueries = computedTopQueries;
+                            console.log('Computed top queries on-demand:', {
+                                degraded: topQueries.degraded.length,
+                                improved: topQueries.improved.length
+                            });
+                        }
+                    }
+                }
+                
+                // If still empty after computation attempt, show message
+                if (!topQueries || ((!topQueries.degraded || topQueries.degraded.length === 0) && 
+                    (!topQueries.improved || topQueries.improved.length === 0))) {
+                    html = '<p style="color: #666; font-style: italic;">No top queries data available. Make sure baseline comparison is enabled and queries have baseline execution data.</p>';
+                    container.innerHTML = html;
+                    return;
+                }
+            }
+            
+            // Helper function to format duration
+            function formatDuration(ns) {
+                if (!ns || ns === 0) return '0s';
+                if (typeof ns === 'number' && ns > 1000000) {
+                    const seconds = ns / 1e9;
+                    if (seconds < 1) {
+                        return (seconds * 1000).toFixed(2) + 'ms';
+                    }
+                    return seconds.toFixed(3) + 's';
+                }
+                return String(ns);
+            }
+            
+            // Top Degraded Queries
+            if (topQueries.degraded && topQueries.degraded.length > 0) {
+                html += '<div style="margin-bottom: 30px;">';
+                html += '<h3 style="color: #ef4444; margin-bottom: 15px;">⚠ Top Degraded Queries</h3>';
+                html += '<div class="table-container">';
+                html += '<table style="width: 100%; border-collapse: collapse;">';
+                html += '<thead><tr>';
+                html += '<th style="padding: 8px; background: #fee2e2; font-weight: 600;">Filter Expression</th>';
+                html += '<th style="padding: 8px; background: #fee2e2; font-weight: 600;">Execution Time (with CBO)</th>';
+                html += '<th style="padding: 8px; background: #fee2e2; font-weight: 600;">Execution Time (without CBO)</th>';
+                html += '<th style="padding: 8px; background: #fee2e2; font-weight: 600;">Performance Impact</th>';
+                html += '</tr></thead><tbody>';
+                
+                topQueries.degraded.forEach((q, idx) => {
+                    const filterExpr = getField(q, 'FilterExpression', 'filterExpression', 'filter_expression') || 'N/A';
+                    const execTimeWithCBO = parseFloat(getField(q, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                    const execTimeWithoutCBO = parseFloat(getField(q, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                    const improvementPercent = parseFloat(getField(q, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                    
+                    html += '<tr>';
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${filterExpr}</td>`;
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${formatDuration(execTimeWithCBO)}</td>`;
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${formatDuration(execTimeWithoutCBO)}</td>`;
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0; color: #ef4444; font-weight: 600;">${improvementPercent.toFixed(2)}% slower</td>`;
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table></div></div>';
+            }
+            
+            // Top Improved Queries
+            if (topQueries.improved && topQueries.improved.length > 0) {
+                html += '<div>';
+                html += '<h3 style="color: #10b981; margin-bottom: 15px;">✨ Top Improved Queries</h3>';
+                html += '<div class="table-container">';
+                html += '<table style="width: 100%; border-collapse: collapse;">';
+                html += '<thead><tr>';
+                html += '<th style="padding: 8px; background: #d1fae5; font-weight: 600;">Filter Expression</th>';
+                html += '<th style="padding: 8px; background: #d1fae5; font-weight: 600;">Execution Time (with CBO)</th>';
+                html += '<th style="padding: 8px; background: #d1fae5; font-weight: 600;">Execution Time (without CBO)</th>';
+                html += '<th style="padding: 8px; background: #d1fae5; font-weight: 600;">Performance Improvement</th>';
+                html += '</tr></thead><tbody>';
+                
+                topQueries.improved.forEach((q, idx) => {
+                    const filterExpr = getField(q, 'FilterExpression', 'filterExpression', 'filter_expression') || 'N/A';
+                    const execTimeWithCBO = parseFloat(getField(q, 'ExecutionTimeWithCBO', 'executionTimeWithCBO', 'execution_time_with_cbo') || 0);
+                    const execTimeWithoutCBO = parseFloat(getField(q, 'ExecutionTimeWithoutCBO', 'executionTimeWithoutCBO', 'execution_time_without_cbo') || 0);
+                    const improvementPercent = parseFloat(getField(q, 'ImprovementPercent', 'improvementPercent', 'improvement_percent') || 0);
+                    
+                    html += '<tr>';
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${filterExpr}</td>`;
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${formatDuration(execTimeWithCBO)}</td>`;
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${formatDuration(execTimeWithoutCBO)}</td>`;
+                    html += `<td style="padding: 8px; border-bottom: 1px solid #e0e0e0; color: #10b981; font-weight: 600;">${improvementPercent.toFixed(2)}% faster</td>`;
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table></div></div>';
+            }
+            
+            container.innerHTML = html;
+        }
+
+        function updateEvaluationSummary(summary, comparison, overview) {
+            const container = document.getElementById('evaluationSummary');
+            let html = '';
+
+            // Helper function to get field value with multiple name variations
+            function getSummaryField(obj, ...names) {
+                if (!obj) return null;
+                for (const name of names) {
+                    if (obj[name] !== undefined && obj[name] !== null) {
+                        return obj[name];
+                    }
+                }
+                return null;
+            }
+
+            // Helper function to format duration (handles nanoseconds from Go)
+            function formatDuration(ns) {
+                if (!ns || ns === 0) return '0s';
+                // If it's a large number, assume nanoseconds
+                if (typeof ns === 'number' && ns > 1000000) {
+                    const seconds = ns / 1e9;
+                    if (seconds < 1) {
+                        return (seconds * 1000).toFixed(2) + 'ms';
+                    }
+                    return seconds.toFixed(3) + 's';
+                }
+                // If it's already a string or small number, return as is
+                return String(ns);
+            }
+
+            // Always show summary if we have metrics, even if summary is null (compute from metrics)
+            if (summary || (allMetrics && allMetrics.length > 0)) {
+                // If summary is null but we have metrics, compute it
+                if (!summary && allMetrics && allMetrics.length > 0) {
+                    const collectionId = document.getElementById('collectionId').value.trim();
+                    if (collectionId) {
+                        const collectionMetrics = allMetrics.filter(m => {
+                            const mId = getCollectionID(m);
+                            return mId && String(mId) === String(collectionId);
+                        });
+                        if (collectionMetrics.length > 0) {
+                            summary = computeEvaluationSummaryFromMetrics(collectionMetrics);
+                            console.log('Computed evaluation summary on-demand:', summary);
+                        }
+                    } else {
+                        summary = computeEvaluationSummaryFromMetrics(allMetrics);
+                        console.log('Computed evaluation summary on-demand from all metrics:', summary);
+                    }
+                }
+                
+                if (summary) {
+                    html += '<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">';
+                    html += '<h3 style="margin-top: 0; color: #333;">Summary Statistics</h3>';
+                    
+                    const totalQueries = getSummaryField(summary, 'TotalQueries', 'totalQueries') || 0;
+                    const queriesWithCBO = getSummaryField(summary, 'QueriesWithCBO', 'queriesWithCBO') || 0;
+                    const queriesImproved = getSummaryField(summary, 'QueriesImproved', 'queriesImproved') || 0;
+                    const queriesDegraded = getSummaryField(summary, 'QueriesDegraded', 'queriesDegraded') || 0;
+                    const queriesNeutral = getSummaryField(summary, 'QueriesNeutral', 'queriesNeutral') || 0;
+                    
+                    html += `<p><strong>Total Queries:</strong> ${totalQueries}</p>`;
+                    html += `<p><strong>Queries with CBO:</strong> ${queriesWithCBO}</p>`;
+                    html += `<p><strong>Improved:</strong> <span style="color: #10b981;">${queriesImproved}</span></p>`;
+                    html += `<p><strong>Degraded:</strong> <span style="color: #ef4444;">${queriesDegraded}</span></p>`;
+                    html += `<p><strong>Neutral:</strong> <span style="color: #6b7280;">${queriesNeutral}</span></p>`;
+                    
+                    // Show baseline coverage if available from overview
+                    if (overview) {
+                        const baselineCoverage = getSummaryField(overview, 'BaselineCoveragePercent', 'baselineCoveragePercent') || 0;
+                        if (baselineCoverage > 0) {
+                            html += `<p><strong>Baseline Coverage:</strong> ${baselineCoverage.toFixed(2)}%</p>`;
+                        }
+                    }
+                    
+                    const avgReduction = getSummaryField(summary, 'AvgTimeReductionPercent', 'avgTimeReductionPercent') || 0;
+                    const avgReductionNum = typeof avgReduction === 'number' ? avgReduction : parseFloat(avgReduction) || 0;
+                    const reductionColor = avgReductionNum > 0 ? '#10b981' : avgReductionNum < 0 ? '#ef4444' : '#6b7280';
+                    html += `<p><strong>Average Time Reduction:</strong> <span style="color: ${reductionColor};">${avgReductionNum.toFixed(2)}%</span></p>`;
+                    
+                    const totalTimeSaved = getSummaryField(summary, 'TotalTimeSaved', 'totalTimeSaved');
+                    if (totalTimeSaved) {
+                        html += `<p><strong>Total Time Saved:</strong> ${formatDuration(totalTimeSaved)}</p>`;
+                    }
+                    
+                    html += '</div>';
+                    
+                    // Strategy Distribution - always show, even if empty
+                    const strategyDist = getSummaryField(summary, 'StrategyDistribution', 'strategyDistribution') || {};
+                    html += '<h3 style="margin-top: 20px; color: #333;">Strategy Distribution</h3>';
+                    if (Object.keys(strategyDist).length > 0) {
+                        html += '<ul style="list-style: none; padding: 0;">';
+                        for (const [strategy, count] of Object.entries(strategyDist)) {
+                            const displayName = strategy.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            html += `<li style="padding: 8px; margin: 5px 0; background: #f8f9fa; border-radius: 4px;">
+                                <strong>${displayName}:</strong> ${count}
+                            </li>`;
+                        }
+                        html += '</ul>';
+                    } else {
+                        html += '<p style="color: #666; font-style: italic;">No strategy data available</p>';
+                    }
+                    
+                    // Estimator Distribution - always show, even if empty
+                    const estimatorDist = getSummaryField(summary, 'EstimatorDistribution', 'estimatorDistribution') || {};
+                    html += '<h3 style="margin-top: 20px; color: #333;">Estimator Distribution</h3>';
+                    if (Object.keys(estimatorDist).length > 0) {
+                        html += '<ul style="list-style: none; padding: 0;">';
+                        for (const [estimator, count] of Object.entries(estimatorDist)) {
+                            const displayName = estimator === 'none' ? 'None' : estimator.charAt(0).toUpperCase() + estimator.slice(1);
+                            html += `<li style="padding: 8px; margin: 5px 0; background: #f8f9fa; border-radius: 4px;">
+                                <strong>${displayName}:</strong> ${count}
+                            </li>`;
+                        }
+                        html += '</ul>';
+                    } else {
+                        html += '<p style="color: #666; font-style: italic;">No estimator data available</p>';
+                    }
+                }
+            }
+
+            // Always show comparison if we have metrics with baseline data
+            if (comparison || (allMetrics && allMetrics.length > 0)) {
+                // If comparison is null but we have metrics, compute it
+                if (!comparison && allMetrics && allMetrics.length > 0) {
+                    const collectionId = document.getElementById('collectionId').value.trim();
+                    if (collectionId) {
+                        const collectionMetrics = allMetrics.filter(m => {
+                            const mId = getCollectionID(m);
+                            return mId && String(mId) === String(collectionId);
+                        });
+                        if (collectionMetrics.length > 0) {
+                            comparison = computeComparisonFromMetrics(collectionMetrics);
+                            console.log('Computed comparison on-demand:', comparison);
+                        }
+                    } else {
+                        comparison = computeComparisonFromMetrics(allMetrics);
+                        console.log('Computed comparison on-demand from all metrics:', comparison);
+                    }
+                }
+                
+                if (comparison) {
+                    html += '<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px;">';
+                    html += '<h3 style="margin-top: 0; color: #333;">Performance Comparison</h3>';
+                    
+                    const compTotalQueries = getSummaryField(comparison, 'TotalQueries', 'totalQueries') || 0;
+                    const queriesWithBaseline = getSummaryField(comparison, 'QueriesWithBaseline', 'queriesWithBaseline') || 0;
+                    
+                    html += `<p><strong>Total Queries:</strong> ${compTotalQueries}</p>`;
+                    html += `<p><strong>Queries with Baseline:</strong> ${queriesWithBaseline}</p>`;
+                    
+                    const avgWithCBO = getSummaryField(comparison, 'AvgExecutionTimeWithCBO', 'avgExecutionTimeWithCBO');
+                    const avgWithoutCBO = getSummaryField(comparison, 'AvgExecutionTimeWithoutCBO', 'avgExecutionTimeWithoutCBO');
+                    
+                    if (avgWithCBO) {
+                        html += `<p><strong>Avg Execution Time (with CBO):</strong> ${formatDuration(avgWithCBO)}</p>`;
+                    }
+                    if (avgWithoutCBO) {
+                        html += `<p><strong>Avg Execution Time (without CBO):</strong> ${formatDuration(avgWithoutCBO)}</p>`;
+                    }
+                    
+                    const compAvgReduction = getSummaryField(comparison, 'AvgTimeReductionPercent', 'avgTimeReductionPercent') || 0;
+                    const compAvgReductionNum = typeof compAvgReduction === 'number' ? compAvgReduction : parseFloat(compAvgReduction) || 0;
+                    const compReductionColor = compAvgReductionNum > 0 ? '#10b981' : compAvgReductionNum < 0 ? '#ef4444' : '#6b7280';
+                    html += `<p><strong>Average Time Reduction:</strong> <span style="color: ${compReductionColor};">${compAvgReductionNum.toFixed(2)}%</span></p>`;
+                    
+                    const compTotalTimeSaved = getSummaryField(comparison, 'TotalTimeSaved', 'totalTimeSaved');
+                    if (compTotalTimeSaved) {
+                        html += `<p><strong>Total Time Saved:</strong> ${formatDuration(compTotalTimeSaved)}</p>`;
+                    }
+                    
+                    html += '</div>';
+                    
+                    const optResults = getSummaryField(comparison, 'OptimizationResults', 'optimizationResults');
+                    if (optResults) {
+                        html += '<h3 style="margin-top: 20px; color: #333;">Optimization Results</h3>';
+                        html += '<ul style="list-style: none; padding: 0;">';
+                        const improved = getSummaryField(optResults, 'Improved', 'improved') || 0;
+                        const degraded = getSummaryField(optResults, 'Degraded', 'degraded') || 0;
+                        const neutral = getSummaryField(optResults, 'Neutral', 'neutral') || 0;
+                        html += `<li style="padding: 8px; margin: 5px 0; background: #f8f9fa; border-radius: 4px;">
+                            <strong>Improved:</strong> <span style="color: #10b981;">${improved}</span>
+                        </li>`;
+                        html += `<li style="padding: 8px; margin: 5px 0; background: #f8f9fa; border-radius: 4px;">
+                            <strong>Degraded:</strong> <span style="color: #ef4444;">${degraded}</span>
+                        </li>`;
+                        html += `<li style="padding: 8px; margin: 5px 0; background: #f8f9fa; border-radius: 4px;">
+                            <strong>Neutral:</strong> <span style="color: #6b7280;">${neutral}</span>
+                        </li>`;
+                        html += '</ul>';
+                    }
+                }
+            }
+
+            if (!html) {
+                html = '<div style="background: #fef3c7; padding: 15px; border-radius: 5px; border-left: 4px solid #f59e0b;">';
+                html += '<p style="color: #92400e; margin: 0;"><strong>No evaluation summary available.</strong></p>';
+                if (allMetrics.length > 0) {
+                    const firstCollId = getCollectionID(allMetrics[0]);
+                    if (firstCollId) {
+                        html += `<p style="color: #92400e; margin: 10px 0 0 0;">Try entering collection ID: <strong>${firstCollId}</strong></p>`;
+                    } else {
+                        html += '<p style="color: #92400e; margin: 10px 0 0 0;">Make sure you have executed queries with filter expressions and CBO evaluation is enabled.</p>';
+                    }
+                } else {
+                    html += '<p style="color: #92400e; margin: 10px 0 0 0;">Make sure queries have been executed and CBO evaluation is enabled.</p>';
+                }
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function updateRecommendations(recommendations) {
+            const list = document.getElementById('recommendationsList');
+            list.innerHTML = '';
+
+            if (!recommendations || recommendations.length === 0) {
+                list.innerHTML = '<li>No recommendations available at this time.</li>';
+                return;
+            }
+
+            recommendations.forEach(rec => {
+                const li = document.createElement('li');
+                li.textContent = rec;
+                list.appendChild(li);
+            });
+        }
+
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            if (document.getElementById('content').style.display !== 'none') {
+                loadData();
+            }
+        }, 30000);
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            // Ensure host input has default value
+            const hostInput = document.getElementById('milvusHost');
+            if (!hostInput.value || hostInput.value.trim() === '') {
+                hostInput.value = 'http://localhost:9091';
+            }
+            
+            // Check if Chart.js loaded successfully
+            if (typeof Chart === 'undefined') {
+                const warning = document.createElement('div');
+                warning.className = 'error';
+                warning.style.background = '#fef3c7';
+                warning.style.color = '#92400e';
+                warning.innerHTML = `<strong>⚠ Warning:</strong> Chart.js failed to load. Charts will be disabled. 
+                    This is often due to browser tracking prevention. The dashboard will still work for viewing data in tables.`;
+                document.getElementById('errorContainer').appendChild(warning);
+            }
+            
+            // Small delay to ensure everything is initialized
+            setTimeout(() => {
+                loadData();
+            }, 100);
+        });
+    </script>
+</body>
+</html>

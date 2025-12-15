@@ -1,0 +1,47 @@
+# Milvus Project Guidelines
+
+You are an expert Core Developer for Milvus (Vector Database). 
+The codebase is a hybrid of C++ (Core engine, Knowhere) and Go (Coordination, Proxy, QueryNode).
+
+## General Principles
+- **Performance First:** Milvus is a database. Avoid unnecessary memory copies. Use pointers/references where possible.
+- **Concurrency:** Be careful with Goroutines in Go and Threads in C++. Always consider race conditions.
+
+## C++ Rules (Core Engine)
+- **Standard:** Use C++17.
+- **Memory:** Use smart pointers (`std::shared_ptr`, `std::unique_ptr`) instead of raw pointers unless interfacing with legacy C APIs.
+- **Error Handling:** Use `Status` objects (typical in Milvus/Knowhere) rather than exceptions for flow control.
+- **Formatting:** Follow the clang-format style present in the repo.
+
+## Go Rules (Coordination Layer)
+- **Error Handling:** Use `fmt.Errorf` with wrapping (`%w`) for errors. Check `err != nil` immediately.
+- **Context:** Always propagate `ctx context.Context` as the first argument in long-running functions.
+- **Log:** Use the Milvus internal logger (`log.Ctx(ctx).Info(...)`), do not use standard `fmt.Print`.
+
+## Protobuf/GRPC
+- If modifying a `.proto` file, remind me to re-generate the bindings using the Makefile commands.
+
+## Development and Build
+- **Docker Environment:** Local development environment uses Docker. All build-related commands must run inside Milvus's builder container on Docker.
+- **Container Workspace:** Inside the Docker builder container, the workspaceFolder is usually `/go/src/github.com/milvus-io/milvus`.
+- **Environment Setup:** Always source `scripts/setenv.sh` before building Go code to configure PKG_CONFIG_PATH and LD_LIBRARY_PATH for C++ dependencies.
+- When suggesting build commands or development workflows, ensure they are executed within the Docker builder container context.
+- **GPU Builder Container:** For GPU development, use the `gpubuilder` service from `docker-compose-devcontainer.yml`. The container name is `milvus-gpubuilder-1` and requires NVIDIA runtime support.
+- **GPU Container Requirements:** GPU builder uses `runtime: nvidia` and requires NVIDIA Docker runtime. Volume directory uses `.docker-gpu` prefix instead of `.docker`.
+- **Container Selection:** 
+  - CPU builds: Use `milvus-builder-1` container
+  - GPU builds: Use `milvus-gpubuilder-1` container (from `docker-compose-devcontainer.yml`)
+- **Example (CPU):** `cd /home/uclab-wsl/development/milvus && docker exec milvus-builder-1 bash -c "cd /go/src/github.com/milvus-io/milvus && source scripts/setenv.sh && go build ./internal/proxy/..." 2>&1 | tail -30`
+- **Example (GPU):** `cd /home/uclab-wsl/development/milvus && docker exec milvus-gpubuilder-1 bash -c "cd /go/src/github.com/milvus-io/milvus && source scripts/setenv.sh && go build ./internal/proxy/..." 2>&1 | tail -30`
+
+## Debugging and Runtime
+- **Docker Context:** Debugging and runtime operations run inside the Milvus builder container on Docker.
+- **Milvus Binary:** The built Milvus binary is located at `${workspaceFolder}/bin/milvus`.
+- **Running Standalone:** To run Milvus standalone, execute: `./bin/milvus run standalone` from the workspace root.
+- **Required Environment Variables:**
+  - `MILVUS_DIR`: Set to `${workspaceFolder}` (workspace root directory)
+  - `LD_LIBRARY_PATH`: Set to `${workspaceFolder}/internal/core/output/lib` (for C++ core libraries)
+  - `PKG_CONFIG_PATH`: Set to `${workspaceFolder}/internal/core/output/lib/pkgconfig` (for pkg-config)
+- **Debugging Tests:** When debugging individual test files, ensure `LD_LIBRARY_PATH` is set to `${workspaceFolder}/internal/core/output/lib` to link against C++ core libraries.
+- **GPU Development:** For GPU builds and testing, use `milvus-gpubuilder-1` container. GPU builder container has NVIDIA runtime enabled and exposes GPU devices via `NVIDIA_VISIBLE_DEVICES: all` and `NVIDIA_DRIVER_CAPABILITIES: compute,utility`.
+- **Starting GPU Container:** Use `docker-compose -f docker-compose-devcontainer.yml up -d gpubuilder` to start the GPU builder container and its dependencies (etcd, minio, pulsar, azurite, gcpnative).

@@ -146,4 +146,18 @@ const (
 
 	// IndexListPath is the path to get all indexes.
 	IndexListPath = "/_index/list"
+
+	// CBO evaluation paths
+	// CBOMetricsPath is the path to get CBO metrics for queries
+	CBOMetricsPath = "/_cbo/metrics"
+	// CBOEvaluationPath is the path to get CBO evaluation summary
+	CBOEvaluationPath = "/_cbo/evaluation"
+	// CBOComparisonPath is the path to get CBO performance comparison
+	CBOComparisonPath = "/_cbo/comparison"
+	// CBORecommendationsPath is the path to get CBO optimization recommendations
+	CBORecommendationsPath = "/_cbo/recommendations"
+	// CBOOverviewPath is the path to get CBO comprehensive overview
+	CBOOverviewPath = "/_cbo/overview"
+	// CBOTopPath is the path to get top-N degraded or improved queries
+	CBOTopPath = "/_cbo/top"
 )
